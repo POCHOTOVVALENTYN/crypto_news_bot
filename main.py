@@ -6,11 +6,16 @@ from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID, PARSE_INTERVAL, OPENAI_API_KEY
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID, PARSE_INTERVAL
 from database import db
 from parser.rss_parser import RSSParser
-from services.ai_summary import NewsAnalyzer, format_sentiment_emoji
 from services.price_tracker import PriceTracker
+from services.message_builder import (
+    AdvancedMessageFormatter,
+    ImageExtractor,
+    RichMediaMessage,
+    TelegramGIFLibrary
+)
 
 # Логирование
 logging.basicConfig(
@@ -24,52 +29,72 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
-rss_parser = RSSParser()
-ai_analyzer = NewsAnalyzer(api_key=OPENAI_API_KEY)
+rss_parser = RSSParser(use_russian=True)
 price_tracker = PriceTracker()
 scheduler = AsyncIOScheduler()
 
 
-async def send_to_telegram(title: str, summary: str, link: str, source: str, source_link: str,
-                           sentiment: str = "⚪", ai_data=None):
+async def send_rich_news(
+        title: str,
+        summary: str,
+        source: str,
+        source_url: str,
+        entry: dict = None,  # Полный entry из RSS для извлечения изображения
+) -> bool:
     """
-    Отправьте новость в Telegram с красивым форматированием
-
-    ai_data = {title_ru, summary_ru, sentiment, key_points}
+    Отправьте новость с максимумом деталей:
+    - Текст со ссылкой "[читай здесь](...)"
+    - Изображение если есть в новости
+    - GIF для визуализации
+    - BTC цена
     """
     try:
-        # Используйте AI перевод если доступен
-        if ai_data:
-            title_text = ai_data.get("title_ru", title)
-            summary_text = ai_data.get("summary_ru", summary)
-            sentiment = format_sentiment_emoji(ai_data.get("sentiment", "Neutral"))
-        else:
-            title_text = title
-            summary_text = summary[:150]
-
         # Получите текущую цену BTC
         btc_data = await price_tracker.get_bitcoin_price()
-        btc_price_str = PriceTracker.format_price(btc_data)
+        btc_price_str = PriceTracker.format_price(btc_data) if btc_data else ""
 
-        # Создайте сообщение с ссылкой на источник в названии
-        message_text = f"""🔔 *{title_text}*
+        # Определите настроение на основе заголовка
+        title_lower = title.lower()
+        if any(word in title_lower for word in ["surge", "pump", "rally", "взлет", "рост"]):
+            sentiment = "bullish"
+        elif any(word in title_lower for word in ["crash", "dump", "fall", "падение", "обвал"]):
+            sentiment = "bearish"
+        elif any(word in title_lower for word in ["moon", "луна"]):
+            sentiment = "moon"
+        else:
+            sentiment = "neutral"
 
-_{summary_text}_
+        # Извлеките изображение если есть
+        image_url = None
+        if entry and isinstance(entry, dict):
+            # Если entry - это словарь RSS
+            image_url = ImageExtractor.extract_image_from_entry(entry)
 
-{sentiment}
-
-📰 *Источник:* [{source}]({source_link}){btc_price_str}
-        """
-
-        await bot.send_message(
-            chat_id=TELEGRAM_CHANNEL_ID,
-            text=message_text,
-            parse_mode="Markdown",
-            disable_web_page_preview=False
+        # Форматируйте сообщение
+        formatted_msg = AdvancedMessageFormatter.format_professional_news(
+            title=title,
+            summary=summary,
+            source=source,
+            source_url=source_url,
+            btc_price=btc_price_str,
+            sentiment=sentiment,
+            image_url=image_url,
         )
 
-        logger.info(f"✅ Отправлено: {title_text[:50]}...")
-        return True
+        # Создайте полное сообщение с медиа
+        rich_msg = RichMediaMessage(
+            text=formatted_msg["text"],
+            image_url=formatted_msg["image_url"],
+            gif_query=formatted_msg["gif_query"],
+        )
+
+        # Отправьте сообщение
+        success = await rich_msg.send(bot, TELEGRAM_CHANNEL_ID)
+
+        if success:
+            logger.info(f"✅ Отправлено: {title[:50]}...")
+
+        return success
 
     except Exception as e:
         logger.error(f"❌ Ошибка отправки: {e}")
@@ -103,30 +128,20 @@ async def parse_and_post_news():
 
             logger.info(f"➕ Добавлена: {news['title'][:30]}...")
 
-            # AI обработка (перевод + анализ)
-            ai_data = None
-            if ai_analyzer.client:
-                ai_data = await ai_analyzer.translate_and_analyze(
-                    news['title'],
-                    news['summary']
-                )
-
-            # Отправьте в Telegram
-            success = await send_to_telegram(
+            # Отправьте в Telegram с максимумом деталей
+            success = await send_rich_news(
                 title=news['title'],
                 summary=news['summary'],
-                link=news['link'],
                 source=news['source'],
-                source_link=news['link'],  # Используйте ссылку источника для клика
-                sentiment="⚪",
-                ai_data=ai_data
+                source_url=news['link'],
+                entry=news.get('raw_entry'),  # Передайте оригинальный entry для извлечения изображения
             )
 
             if success:
                 await db.mark_as_posted(news['link'])
 
             # Rate limiting
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
 
     except Exception as e:
         logger.error(f"❌ Ошибка парсинга: {e}")
@@ -136,11 +151,9 @@ async def startup():
     """Инициализация при запуске"""
     logger.info("🚀 Запуск бота...")
 
-    # Инициализируйте БД
     await db.init()
     logger.info("✅ БД инициализирована")
 
-    # Проверьте Telegram подключение
     try:
         me = await bot.get_me()
         logger.info(f"✅ Бот подключен: @{me.username}")
@@ -148,13 +161,12 @@ async def startup():
         logger.error(f"❌ Ошибка Telegram: {e}")
         raise
 
-    # Проверьте OpenAI подключение
-    if ai_analyzer.client:
-        logger.info("✅ OpenAI подключен (AI переводы включены)")
-    else:
-        logger.warning("⚠️ OpenAI не подключен (используются оригинальные тексты)")
+    logger.info("✅ Русскоязычные источники включены")
+    logger.info("✅ Поддержка изображений из новостей включена")
+    logger.info("✅ GIF визуализация включена")
+    logger.info("✅ Ссылки в тексте включены: [читай здесь](...)")
+    logger.info("✅ Расширенная эмодзи палитра включена")
 
-    # Запланируйте парсинг
     scheduler.add_job(
         parse_and_post_news,
         IntervalTrigger(seconds=PARSE_INTERVAL),
@@ -162,7 +174,7 @@ async def startup():
         name="Парсинг криптовалютных новостей",
         replace_existing=True
     )
-    logger.info(f"⏰ Интервал парсинга: {PARSE_INTERVAL}с")
+    logger.info(f"⏰ Интервал проверки: {PARSE_INTERVAL}с")
 
     scheduler.start()
 
@@ -180,11 +192,8 @@ async def main():
     """Главная функция"""
     try:
         await startup()
-
-        # Первый парсинг сразу при запуске
         await parse_and_post_news()
 
-        # Держите бота в живых
         while True:
             await asyncio.sleep(1)
 
@@ -200,7 +209,12 @@ if __name__ == "__main__":
     os.makedirs("logs", exist_ok=True)
 
     logger.info("=" * 70)
-    logger.info("🎯 CRYPTO NEWS TELEGRAM BOT - REFACTORED")
+    logger.info("🎯 CRYPTO NEWS TELEGRAM BOT - ADVANCED")
+    logger.info("=" * 70)
+    logger.info("📸 Поддержка изображений: ✅")
+    logger.info("🎬 Поддержка GIF: ✅")
+    logger.info("🔗 Ссылки в тексте: ✅")
+    logger.info("😊 Расширенная эмодзи: ✅")
     logger.info("=" * 70)
 
     asyncio.run(main())
