@@ -1,0 +1,8 @@
+crypto_news.db
+logs/
+.env
+venv/
+.DS_Store
+.idea/
+__pycache__/
+*.pyc
