@@ -9,12 +9,12 @@ from apscheduler.triggers.interval import IntervalTrigger
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID, PARSE_INTERVAL
 from database import db
 from parser.rss_parser import RSSParser
-from services.price_tracker import PriceTracker
 from services.message_builder import (
     AdvancedMessageFormatter,
     ImageExtractor,
     RichMediaMessage,
-    TelegramGIFLibrary
+    TelegramGIFLibrary,
+    get_multiple_crypto_prices
 )
 
 # Логирование
@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 rss_parser = RSSParser(use_russian=True)
-price_tracker = PriceTracker()
 scheduler = AsyncIOScheduler()
 
 
@@ -39,19 +38,20 @@ async def send_rich_news(
         summary: str,
         source: str,
         source_url: str,
-        entry: dict = None,  # Полный entry из RSS для извлечения изображения
+        entry: dict = None,
 ) -> bool:
     """
     Отправьте новость с максимумом деталей:
-    - Текст со ссылкой "[читай здесь](...)"
-    - Изображение если есть в новости
-    - GIF для визуализации
-    - BTC цена
+    ✅ Полный текст summary (не обрезанный)
+    ✅ Фото вместе с текстом (не отдельное сообщение)
+    ✅ Ссылка встроена в слово "источник"
+    ✅ Цены BTC, ETH, SOL
+    ✅ "Настроение рынка"
+    ✅ GIF для визуализации
     """
     try:
-        # Получите текущую цену BTC
-        btc_data = await price_tracker.get_bitcoin_price()
-        btc_price_str = PriceTracker.format_price(btc_data) if btc_data else ""
+        # ✅ Получите цены нескольких крипто (BTC, ETH, SOL)
+        prices = await get_multiple_crypto_prices()
 
         # Определите настроение на основе заголовка
         title_lower = title.lower()
@@ -67,21 +67,20 @@ async def send_rich_news(
         # Извлеките изображение если есть
         image_url = None
         if entry and isinstance(entry, dict):
-            # Если entry - это словарь RSS
             image_url = ImageExtractor.extract_image_from_entry(entry)
 
-        # Форматируйте сообщение
+        # ✅ Форматируйте сообщение (с полным текстом и несколькими ценами)
         formatted_msg = AdvancedMessageFormatter.format_professional_news(
             title=title,
-            summary=summary,
+            summary=summary,  # ✅ ПОЛНЫЙ текст, не обрезанный
             source=source,
             source_url=source_url,
-            btc_price=btc_price_str,
+            prices=prices,  # ✅ Несколько цен: BTC, ETH, SOL
             sentiment=sentiment,
             image_url=image_url,
         )
 
-        # Создайте полное сообщение с медиа
+        # ✅ Создайте сообщение (фото отправляется ВМЕСТЕ с текстом)
         rich_msg = RichMediaMessage(
             text=formatted_msg["text"],
             image_url=formatted_msg["image_url"],
@@ -128,13 +127,13 @@ async def parse_and_post_news():
 
             logger.info(f"➕ Добавлена: {news['title'][:30]}...")
 
-            # Отправьте в Telegram с максимумом деталей
+            # Отправьте в Telegram
             success = await send_rich_news(
                 title=news['title'],
                 summary=news['summary'],
                 source=news['source'],
                 source_url=news['link'],
-                entry=news.get('raw_entry'),  # Передайте оригинальный entry для извлечения изображения
+                entry=news.get('raw_entry'),
             )
 
             if success:
@@ -162,10 +161,10 @@ async def startup():
         raise
 
     logger.info("✅ Русскоязычные источники включены")
-    logger.info("✅ Поддержка изображений из новостей включена")
+    logger.info("✅ Поддержка изображений включена (отправляется вместе с текстом)")
+    logger.info("✅ Цены: BTC, ETH, SOL включены")
+    logger.info("✅ Ссылка встроена в слово [источник](...)")
     logger.info("✅ GIF визуализация включена")
-    logger.info("✅ Ссылки в тексте включены: [читай здесь](...)")
-    logger.info("✅ Расширенная эмодзи палитра включена")
 
     scheduler.add_job(
         parse_and_post_news,
@@ -209,12 +208,13 @@ if __name__ == "__main__":
     os.makedirs("logs", exist_ok=True)
 
     logger.info("=" * 70)
-    logger.info("🎯 CRYPTO NEWS TELEGRAM BOT - ADVANCED")
+    logger.info("🎯 CRYPTO NEWS TELEGRAM BOT - PROFESSIONAL V3")
     logger.info("=" * 70)
-    logger.info("📸 Поддержка изображений: ✅")
-    logger.info("🎬 Поддержка GIF: ✅")
-    logger.info("🔗 Ссылки в тексте: ✅")
-    logger.info("😊 Расширенная эмодзи: ✅")
+    logger.info("📸 Фото вместе с текстом: ✅")
+    logger.info("💰 Цены BTC, ETH, SOL: ✅")
+    logger.info("🔗 Ссылка в слове: ✅")
+    logger.info("📄 Полный текст новости: ✅")
+    logger.info("🎬 GIF визуализация: ✅")
     logger.info("=" * 70)
 
     asyncio.run(main())
