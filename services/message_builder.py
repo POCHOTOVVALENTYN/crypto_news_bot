@@ -293,7 +293,8 @@ class AdvancedMessageFormatter:
 
         # Укоротите заголовок до 100 символов
         title_display = title[:100] + "..." if len(title) > 100 else title
-
+        # Применяем очистку текста
+        summary = AdvancedMessageFormatter.clean_text(summary)
         # Ограничьте summary до 400 символов
         summary_display = summary[:400] + "..." if len(summary) > 400 else summary
 

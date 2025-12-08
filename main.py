@@ -6,16 +6,17 @@ from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID, PARSE_INTERVAL
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
 from database import db
 from parser.rss_parser import RSSParser
 from services.message_builder import (
     AdvancedMessageFormatter,
-    ImageExtractor,
     RichMediaMessage,
     FearGreedIndexTracker,
     get_multiple_crypto_prices
 )
+# Импортируем ИИ анализатор
+from services.ai_summary import NewsAnalyzer
 
 # Логирование
 logging.basicConfig(
@@ -31,274 +32,164 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 rss_parser = RSSParser(use_russian=True)
 scheduler = AsyncIOScheduler()
+ai_analyzer = NewsAnalyzer()  # Инициализация ИИ
 
 
 # 1. Функция ПАРСИНГА (Только сохраняет в БД)
 async def scheduled_parsing():
-    """Только собирает новости в базу"""
-    logger.info("🔍 Запуск парсера...")
-    news_list = await rss_parser.get_all_news()
-
-    new_count = 0
-    for news in news_list:
-        # Если новости нет в базе - добавляем
-        if not await db.news_exists(news['link']):
-            await db.add_news(
-                url=news['link'],
-                title=news['title'],
-                source=news['source'],
-                published_at=news['published']
-            )
-            # ВАЖНО: Мы тут НЕ отправляем, просто сохраняем
-            new_count += 1
-            logger.info(f"📥 Сохранено в очередь: {news['title'][:30]}...")
-
-    if new_count > 0:
-        logger.info(f"💾 Всего добавлено в очередь: {new_count}")
-
-
-# 2. Функция ПУБЛИКАЦИИ (Берет из БД и отправляет)
-async def scheduled_posting():
-    """Берет одну новость из очереди и отправляет"""
-    # Берем одну старую новость
-    news_item = await db.get_oldest_unposted_news()
-
-    if not news_item:
-        logger.info("📭 Очередь пуста, нечего публиковать")
-        return
-
-    logger.info(f"📤 Публикую из очереди: {news_item['title'][:30]}...")
-
-    # Тут нам нужно получить полный текст новости, так как в БД мы храним только заголовки
-    # В идеале нужно хранить summary в БД, но пока спарсим заново или используем заглушку
-    # Для упрощения, пока возьмем данные из БД, но summary там нет.
-    # ВАЖНО: Вам нужно добавить поле summary в таблицу database.py, если хотите хранить текст!
-    # ПОКА ЧТО: Чтобы не ломать БД миграциями, мы можем просто отправлять заголовок
-    # ИЛИ (лучше) при публикации снова быстро спарсить этот URL, чтобы получить картинку и текст.
-
-    # Чтобы не усложнять: В текущем коде RSSParser возвращает summary.
-    # Давайте немного схитрим:
-    # При парсинге мы теряем summary при сохранении в БД (в текущей схеме).
-    # РЕШЕНИЕ: Добавьте поле summary в БД или (проще сейчас) отправляйте уведомление
-    # о том, что нужно обновить схему БД.
-
-    # Но чтобы бот работал ПРЯМО СЕЙЧАС с текущей БД:
-    # Мы отправим то, что есть, а полный текст и картинку вытянем заново через парсер?
-    # Нет, это долго.
-
-    # ЛУЧШЕЕ РЕШЕНИЕ ПРЯМО СЕЙЧАС (без пересоздания БД):
-    # Я обновлю код database.py выше, чтобы он не требовал изменений,
-    # но учтите: сейчас в БД нет summary. Бот отправит новость без описания, если мы не добавим колонку.
-    pass
-
-
-async def send_rich_news(
-        title: str,
-        summary: str,
-        source: str,
-        source_url: str,
-        entry: dict = None,
-) -> bool:
-    """
-    Отправьте новость с полными деталями:
-    ✅ Полный текст summary
-    ✅ Фото вместе с текстом
-    ✅ Ссылка встроена в слово источника
-    ✅ Цены BTC, ETH, SOL
-    ✅ Индекс страха и жадности
-    ✅ BLEXLER ЧАТ со ссылкой
-    """
+    """Только собирает новости в базу, ничего не отправляет"""
     try:
-        # Получите цены криптовалют (с кэшированием)
-        prices = await get_multiple_crypto_prices()
+        logger.info("🔍 Запуск парсера (сбор новостей)...")
+        news_list = await rss_parser.get_all_news()
 
-        # ✅ НОВОЕ: Получите индекс страха
+        new_count = 0
+        for news in news_list:
+            # Если новости нет в базе - добавляем
+            if not await db.news_exists(news['link']):
+                # Сохраняем С КАРТИНКОЙ И ТЕКСТОМ
+                await db.add_news(
+                    url=news['link'],
+                    title=news['title'],
+                    summary=news['summary'],
+                    source=news['source'],
+                    published_at=news['published'],
+                    image_url=news['image_url']
+                )
+                new_count += 1
+                logger.info(f"📥 В очередь: {news['title'][:30]}...")
+
+        if new_count > 0:
+            logger.info(f"💾 Добавлено в базу: {new_count} новостей")
+        else:
+            logger.info("💤 Новых новостей пока нет")
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка парсинга: {e}")
+
+
+# 2. Функция ПУБЛИКАЦИИ (Берет из БД, обрабатывает ИИ и отправляет)
+async def scheduled_posting():
+    """Берет одну новость из очереди, обрабатывает и отправляет"""
+    try:
+        # 1. Берем одну старую новость
+        news_item = await db.get_oldest_unposted_news()
+
+        if not news_item:
+            logger.info("📭 Очередь пуста, нечего публиковать")
+            return
+
+        logger.info(f"📤 Подготовка публикации: {news_item['title'][:30]}...")
+
+        # Данные из БД
+        title = news_item['title']
+        summary = news_item['summary'] or ""
+        source = news_item['source']
+        url = news_item['url']
+        image_url = news_item['image_url']
+
+        # 2. Обработка через ИИ (Gemini)
+        # Пробуем улучшить текст и убрать мусор
+        ai_result = await ai_analyzer.translate_and_analyze(title, summary)
+
+        if ai_result:
+            logger.info("✨ ИИ обработал новость")
+            # Если ИИ вернул результат, используем его
+            title = ai_result.get("clean_title", title)
+            summary = ai_result.get("clean_summary", summary)
+        else:
+            logger.warning("⚠️ ИИ недоступен или ошибка, публикуем как есть (с базовой очисткой)")
+
+        # 3. Получаем рыночные данные
+        prices = await get_multiple_crypto_prices()
         fear_greed = await FearGreedIndexTracker.get_fear_greed_index()
 
-        # Извлеките изображение если есть
-        image_url = None
-        if entry and isinstance(entry, dict):
-            image_url = ImageExtractor.extract_image_from_entry(entry)
-
-        # Форматируйте сообщение
+        # 4. Формируем сообщение
         formatted_msg = AdvancedMessageFormatter.format_professional_news(
             title=title,
-            summary=summary,
+            summary=summary,  # Тут внутри уже сработает clean_text
             source=source,
-            source_url=source_url,
+            source_url=url,
             prices=prices,
-            fear_greed=fear_greed,  # ✅ НОВОЕ
+            fear_greed=fear_greed,
             image_url=image_url,
         )
 
-        # ✅ ИСПРАВЛЕНО: Убраны GIF
+        # 5. Отправляем
         rich_msg = RichMediaMessage(
             text=formatted_msg["text"],
             image_url=formatted_msg["image_url"],
         )
 
-        # Отправьте сообщение
         success = await rich_msg.send(bot, TELEGRAM_CHANNEL_ID)
 
         if success:
-            logger.info(f"✅ Отправлено: {title[:50]}...")
-
-        return success
-
-    except Exception as e:
-        logger.error(f"❌ Ошибка отправки: {e}", exc_info=True)
-        return False
-
-
-async def parse_and_post_news():
-    """Основной парсинг и постинг новостей"""
-    try:
-        logger.info("🔍 Парсинг новостей...")
-
-        news_list = await rss_parser.get_all_news()
-        logger.info(f"📊 Найдено {len(news_list)} релевантных новостей")
-
-        if not news_list:
-            logger.warning("⚠️ Нет новостей для публикации")
-            return
-
-        posted_count = 0
-
-        for news in news_list:
-            # ИСПРАВЛЕНИЕ: Проверяем, была ли новость ОТПРАВЛЕНА, а не просто добавлена
-            if await db.news_exists(news['link']):
-                if await db.is_posted(news['link']):
-                    logger.debug(f"⏭️ Уже отправлено: {news['title'][:30]}...")
-                    continue
-                else:
-                    logger.info(f"♻️ Найдена неотправленная новость: {news['title'][:30]}...")
-                    # Новость есть в БД, но не отправлена. Идем дальше к отправке.
-            else:
-                # Если новости нет в БД, добавляем её
-                added = await db.add_news(
-                    url=news['link'],
-                    title=news['title'],
-                    source=news['source'],
-                    published_at=news['published']
-                )
-                if not added:
-                    continue
-                logger.info(f"➕ Добавлена в БД: {news['title'][:50]}...")
-
-
-
-
-            logger.info(f"➕ Добавлена: {news['title'][:50]}...")
-
-            # Отправьте в Telegram
-            success = await send_rich_news(
-                title=news['title'],
-                summary=news['summary'],
-                source=news['source'],
-                source_url=news['link'],
-                entry=news.get('raw_entry'),
-            )
-
-            if success:
-                await db.mark_as_posted(news['link'])
-                posted_count += 1
-
-            # ✅ Rate limiting между постами (5 секунд)
-            await asyncio.sleep(5)
-
-        logger.info(f"✅ Опубликовано {posted_count} новостей")
+            await db.mark_as_posted(url)
+            logger.info(f"✅ Успешно опубликовано: {title[:40]}")
+        else:
+            logger.error("❌ Не удалось отправить сообщение в Telegram")
 
     except Exception as e:
-        logger.error(f"❌ Ошибка парсинга: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка в процессе публикации: {e}", exc_info=True)
 
 
 async def startup():
     """Инициализация при запуске"""
     logger.info("🚀 Запуск бота...")
 
-    # ✅ Проверка .env переменных
-    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "your_token_here":
-        logger.error("❌ TELEGRAM_BOT_TOKEN не установлен в .env")
-        raise ValueError("TELEGRAM_BOT_TOKEN обязателен")
-
-    if TELEGRAM_CHANNEL_ID == -100000000000:
-        logger.error("❌ TELEGRAM_CHANNEL_ID не установлен в .env")
-        raise ValueError("TELEGRAM_CHANNEL_ID обязателен")
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
+        raise ValueError("Проверьте .env: нет токена или ID канала")
 
     await db.init()
-    logger.info("✅ БД инициализирована")
+    logger.info("✅ БД подключена")
 
-    try:
-        me = await bot.get_me()
-        logger.info(f"✅ Бот подключен: @{me.username}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка Telegram: {e}")
-        raise
+    # НАСТРОЙКА РАСПИСАНИЯ
 
-    logger.info("✅ Русскоязычные источники: Forklog, Bits.media")
-    logger.info("✅ Фото вместе с текстом")
-    logger.info("✅ Цены: BTC, ETH, SOL (с кэшированием)")
-    logger.info("✅ Индекс страха и жадности")
-    logger.info("✅ Ссылка встроена в слово источника")
-    logger.info("✅ BLEXLER ЧАТ со ссылкой")
-
-    # ✅ ИСПРАВЛЕНО: Увеличен интервал scheduler для предотвращения пропусков
+    # 1. Сбор новостей каждые 10 минут
     scheduler.add_job(
-        parse_and_post_news,
-        IntervalTrigger(seconds=PARSE_INTERVAL),
-        id="news_parser",
-        name="Парсинг криптовалютных новостей",
-        replace_existing=True,
-        max_instances=1,  # ✅ Только один экземпляр одновременно
-        coalesce=True,  # ✅ Объединить пропущенные запуски
+        scheduled_parsing,
+        IntervalTrigger(minutes=10),
+        id="parsing_job",
+        name="Сбор новостей в базу",
+        replace_existing=True
     )
-    logger.info(f"⏰ Интервал проверки: {PARSE_INTERVAL}с ({PARSE_INTERVAL / 60:.0f} минут)")
+
+    # 2. Публикация в канал каждые 15 минут (строго по одной)
+    scheduler.add_job(
+        scheduled_posting,
+        IntervalTrigger(minutes=15),
+        id="posting_job",
+        name="Публикация одной новости",
+        replace_existing=True
+    )
+
+    logger.info("⏰ Расписание:")
+    logger.info("   📥 Парсинг: каждые 10 мин")
+    logger.info("   📤 Постинг: каждые 15 мин")
 
     scheduler.start()
 
+    # Первый прогон сразу при запуске (чтобы не ждать 10 мин)
+    asyncio.create_task(scheduled_parsing())
+
 
 async def shutdown():
-    """Очистка при остановке"""
-    logger.info("🛑 Остановка бота...")
+    logger.info("🛑 Остановка...")
     if scheduler.running:
         scheduler.shutdown()
     await bot.session.close()
-    logger.info("✅ Бот остановлен")
 
 
 async def main():
-    """Главная функция"""
     try:
         await startup()
-
-        # ✅ Первый парсинг сразу после запуска
-        await parse_and_post_news()
-
+        # Бесконечный цикл, чтобы бот не закрылся
         while True:
             await asyncio.sleep(1)
-
-    except KeyboardInterrupt:
-        logger.info("⌨️ Получен сигнал остановки (Ctrl+C)")
-    except Exception as e:
-        logger.error(f"❌ Критическая ошибка: {e}", exc_info=True)
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("👋 Бот остановлен вручную")
     finally:
         await shutdown()
 
 
 if __name__ == "__main__":
-    os.makedirs("logs", exist_ok=True)
-
-    logger.info("=" * 80)
-    logger.info("🎯 CRYPTO NEWS TELEGRAM BOT - FINAL V4")
-    logger.info("=" * 80)
-    logger.info("📸 Фото вместе с текстом: ✅")
-    logger.info("💰 Цены BTC, ETH, SOL: ✅ (с кэшированием)")
-    logger.info("🔗 Ссылка в слове: ✅")
-    logger.info("📄 Полный текст новости: ✅")
-    logger.info("😱 Индекс страха и жадности: ✅")
-    logger.info("💬 BLEXLER ЧАТ: ✅")
-    logger.info("🚫 GIF убраны: ✅")
-    logger.info("🧹 Упоминания источников удалены: ✅")
-    logger.info("=" * 80)
-
     asyncio.run(main())

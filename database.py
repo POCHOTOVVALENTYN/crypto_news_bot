@@ -32,16 +32,19 @@ class NewsDatabase:
                 result = await cursor.fetchone()
                 return result is not None
 
-    async def add_news(self, url: str, title: str, source: str, published_at: str) -> bool:
+    async def add_news(self, url: str, title: str, summary: str, source: str,
+                       published_at: str, image_url: str = None) -> bool:
+        """Добавьте новость в БД"""
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(
-                    "INSERT INTO news (url, title, source, published_at) VALUES (?, ?, ?, ?)",
-                    (url, title, source, published_at)
+                    "INSERT INTO news (url, title, summary, source, published_at, image_url) VALUES (?, ?, ?, ?, ?, ?)",
+                    (url, title, summary, source, published_at, image_url)
                 )
                 await db.commit()
             return True
         except aiosqlite.IntegrityError:
+            # URL уже существует
             return False
 
     async def get_oldest_unposted_news(self):
