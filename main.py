@@ -106,21 +106,28 @@ async def parse_and_post_news():
         posted_count = 0
 
         for news in news_list:
-            # Проверка на дубликаты
+            # ИСПРАВЛЕНИЕ: Проверяем, была ли новость ОТПРАВЛЕНА, а не просто добавлена
             if await db.news_exists(news['link']):
-                logger.debug(f"⏭️ Уже в БД: {news['title'][:30]}...")
-                continue
+                if await db.is_posted(news['link']):
+                    logger.debug(f"⏭️ Уже отправлено: {news['title'][:30]}...")
+                    continue
+                else:
+                    logger.info(f"♻️ Найдена неотправленная новость: {news['title'][:30]}...")
+                    # Новость есть в БД, но не отправлена. Идем дальше к отправке.
+            else:
+                # Если новости нет в БД, добавляем её
+                added = await db.add_news(
+                    url=news['link'],
+                    title=news['title'],
+                    source=news['source'],
+                    published_at=news['published']
+                )
+                if not added:
+                    continue
+                logger.info(f"➕ Добавлена в БД: {news['title'][:50]}...")
 
-            # Добавьте в БД
-            added = await db.add_news(
-                url=news['link'],
-                title=news['title'],
-                source=news['source'],
-                published_at=news['published']
-            )
 
-            if not added:
-                continue
+
 
             logger.info(f"➕ Добавлена: {news['title'][:50]}...")
 

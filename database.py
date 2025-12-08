@@ -71,6 +71,17 @@ class NewsDatabase:
             result = await cursor.fetchone()
             return result[0] if result else 0
 
+    async def is_posted(self, url: str) -> bool:
+        """Проверьте, была ли новость уже отправлена в Telegram"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "SELECT posted_to_telegram FROM news WHERE url = ?",
+                (url,)
+            )
+            result = await cursor.fetchone()
+            # Если новости нет или флаг 0 -> False. Если флаг 1 -> True
+            return result is not None and result[0] == 1
+
 
 # Создайте глобальный экземпляр
 db = NewsDatabase()

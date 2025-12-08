@@ -58,7 +58,7 @@ class CryptoMultiPriceTracker:
             lines.append(f"🟣 SOL: ${sol['price']:,.2f} {change_str}")
 
         if lines:
-            return "💰 *Цены криптовалют (24h):*\n" + "\n".join(lines)
+            return "💰 <b>Цены криптовалют (24h):</b>\n" + "\n".join(lines)
 
         return ""
 
@@ -284,11 +284,13 @@ class AdvancedMessageFormatter:
         # Ограничьте summary до 400 символов
         summary_display = summary[:400] + "..." if len(summary) > 400 else summary
 
-        # Создайте основной текст
-        message = f"""🔔 *{title_display}*
+        # Экранируем спецсимволы, чтобы не сломать HTML
+        from html import escape
+        title_safe = escape(title_display)
+        summary_safe = escape(summary_display)
 
-{summary_display}
-"""
+        message = f"🔔 <b>{title_safe}</b>\n\n{summary_safe}\n"
+
 
         # ✅ НОВОЕ: Добавьте индекс страха
         if fear_greed:
@@ -300,11 +302,11 @@ class AdvancedMessageFormatter:
             if prices_str:
                 message += f"\n{prices_str}\n"
 
-        # ✅ ИСПРАВЛЕНО: Ссылка встроена в слово источника (Markdown format)
-        message += f"\n📰 Источник: [{source}]({source_url})\n"
+        # Ссылка на источник (HTML):
+        message += f"\n📰 Источник: <a href='{source_url}'>{source}</a>\n"
 
-        # ✅ НОВОЕ: BLEXLER ЧАТ со ссылкой
-        message += f"\n💬 [BLEXLER ЧАТ](https://t.me/+hwsBvRtEj2w3NTli)"
+        # Ссылка на чат (HTML):
+        message += f"\n💬 <a href='https://t.me/+hwsBvRtEj2w3NTli'>BLEXLER ЧАТ</a>"
 
         return {
             "text": message,
@@ -339,7 +341,7 @@ class RichMediaMessage:
                         chat_id=chat_id,
                         photo=self.image_url,
                         caption=self.text,
-                        parse_mode="Markdown",
+                        parse_mode="HTML",
                     )
                     logger.info("✅ Фото + текст отправлены")
                 except Exception as e:
@@ -348,7 +350,7 @@ class RichMediaMessage:
                     await bot.send_message(
                         chat_id=chat_id,
                         text=self.text,
-                        parse_mode="Markdown",
+                        parse_mode="HTML",
                         disable_web_page_preview=True,
                     )
                     logger.info("✅ Только текст отправлен")
