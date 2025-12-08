@@ -1,76 +1,57 @@
 # services/ai_summary.py
-from typing import Optional, Dict
-import json
+import os
 import logging
-from openai import AsyncOpenAI
+import json
+import google.generativeai as genai
+from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
+# Получите ключ тут: https://aistudio.google.com/
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-def format_sentiment_emoji(sentiment: str) -> str:
-    """Конвертируйте sentiment в эмодзи"""
-    sentiments = {
-        "Bullish": "📈",
-        "Bearish": "📉",
-        "Neutral": "⚪",
-    }
-    return sentiments.get(sentiment, "⚪")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 
 class NewsAnalyzer:
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key
-        self.client = AsyncOpenAI(api_key=api_key) if api_key else None
+    def __init__(self):
+        self.model = genai.GenerativeModel('gemini-1.5-flash') if GEMINI_API_KEY else None
 
     async def translate_and_analyze(self, title: str, summary: str) -> Optional[Dict]:
-        """
-        Переведите на русский и проанализируйте настроение
-        """
-        if not self.client:
+        if not self.model:
             return None
 
         try:
-            prompt = f"""Вы профессиональный криптоаналитик и переводчик.
+            prompt = f"""
+            Ты редактор крипто-канала. Твоя задача - очистить и перевести новость.
 
-Проанализируйте эту криптовалютную новость:
+            Входящие данные:
+            Заголовок: {title}
+            Текст: {summary}
 
-ЗАГОЛОВОК: {title}
-ОПИСАНИЕ: {summary}
+            Требования:
+            1. Если текст на английском - переведи на русский.
+            2. УДАЛИ любые технические ошибки, куски кода, фразы типа "We have identified the issue".
+            3. УДАЛИ рекламу и "воды".
+            4. Оставь только суть (2-3 предложения).
 
-Выполните следующие задачи:
-1. Переведите заголовок на русский язык (кратко, 5-10 слов)
-2. Сделайте краткую выжимку описания на русском (1-2 предложения, максимум 150 символов)
-3. Определите настроение рынка: "Bullish" (положительное), "Bearish" (отрицательное) или "Neutral" (нейтральное)
-4. Выделите ключевые факты (максимум 2-3 пункта)
+            Верни ответ строго в JSON:
+            {{
+                "clean_title": "Заголовок на русском",
+                "clean_summary": "Чистая выжимка без мусора",
+                "sentiment": "Bullish" или "Bearish" или "Neutral"
+            }}
+            """
 
-Ответьте ТОЛЬКО в формате JSON без пояснений:
-{{
-    "title_ru": "Переведенный заголовок",
-    "summary_ru": "Краткое описание на русском",
-    "sentiment": "Bullish/Bearish/Neutral",
-    "key_points": ["факт 1", "факт 2"]
-}}
-"""
+            # Gemini синхронный, но быстрый. Для aiogram лучше обернуть в to_thread,
+            # но для 1 запроса раз в 15 минут сойдет и так.
+            response = self.model.generate_content(prompt)
 
-            response = await self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "Вы криптоаналитик. Отвечайте только JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,
-                max_tokens=500,
-            )
+            # Чистим ответ от markdown ```json ... ```
+            text = response.text.replace('```json', '').replace('```', '').strip()
+            return json.loads(text)
 
-            result_text = response.choices[0].message.content.strip()
-            result = json.loads(result_text)
-
-            logger.info(f"🧠 AI обработка: {result.get('sentiment')}")
-            return result
-
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ Ошибка парсинга JSON: {e}")
-            return None
         except Exception as e:
-            logger.error(f"❌ Ошибка OpenAI: {e}")
+            logger.error(f"Gemini Error: {e}")
             return None

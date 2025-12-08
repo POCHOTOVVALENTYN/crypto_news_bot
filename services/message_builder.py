@@ -258,6 +258,19 @@ class AdvancedMessageFormatter:
     """
 
     @staticmethod
+    def clean_text(text: str) -> str:
+        # 1. Удаляем куски кода или технические сообщения на английском (длинные последовательности латиницы)
+        # Если в строке больше 40 английских символов подряд - вырезаем
+        text = re.sub(r'[A-Za-z\s,\.]{40,}', '', text)
+
+        # 2. Удаляем лишние звездочки и спецсимволы
+        text = text.replace('*', '')
+
+        # 3. Чистим HTML остатки если есть
+        text = re.sub(r'<[^>]+>', '', text)
+
+        return text.strip()
+
     def format_professional_news(
             title: str,
             summary: str,
@@ -294,7 +307,7 @@ class AdvancedMessageFormatter:
 
         # ✅ НОВОЕ: Добавьте индекс страха
         if fear_greed:
-            message += f"\n{fear_greed['emoji']} *Индекс страха:* {fear_greed['value']}/100 ({fear_greed['label']})\n"
+            message += f"\n{fear_greed['emoji']} Индекс страха: {fear_greed['value']}/100 ({fear_greed['label']})\n"
 
         # Добавьте цены
         if prices:
