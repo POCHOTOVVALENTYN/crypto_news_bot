@@ -13,7 +13,7 @@ from services.message_builder import (
     AdvancedMessageFormatter,
     ImageExtractor,
     RichMediaMessage,
-    TelegramGIFLibrary,
+    FearGreedIndexTracker,
     get_multiple_crypto_prices
 )
 
@@ -41,50 +41,41 @@ async def send_rich_news(
         entry: dict = None,
 ) -> bool:
     """
-    Отправьте новость с максимумом деталей:
-    ✅ Полный текст summary (не обрезанный)
-    ✅ Фото вместе с текстом (не отдельное сообщение)
-    ✅ Ссылка встроена в слово "источник"
+    Отправьте новость с полными деталями:
+    ✅ Полный текст summary
+    ✅ Фото вместе с текстом
+    ✅ Ссылка встроена в слово источника
     ✅ Цены BTC, ETH, SOL
-    ✅ "Настроение рынка"
-    ✅ GIF для визуализации
+    ✅ Индекс страха и жадности
+    ✅ BLEXLER ЧАТ со ссылкой
     """
     try:
-        # ✅ Получите цены нескольких крипто (BTC, ETH, SOL)
+        # Получите цены криптовалют (с кэшированием)
         prices = await get_multiple_crypto_prices()
 
-        # Определите настроение на основе заголовка
-        title_lower = title.lower()
-        if any(word in title_lower for word in ["surge", "pump", "rally", "взлет", "рост"]):
-            sentiment = "bullish"
-        elif any(word in title_lower for word in ["crash", "dump", "fall", "падение", "обвал"]):
-            sentiment = "bearish"
-        elif any(word in title_lower for word in ["moon", "луна"]):
-            sentiment = "moon"
-        else:
-            sentiment = "neutral"
+        # ✅ НОВОЕ: Получите индекс страха
+        fear_greed = await FearGreedIndexTracker.get_fear_greed_index()
 
         # Извлеките изображение если есть
         image_url = None
         if entry and isinstance(entry, dict):
             image_url = ImageExtractor.extract_image_from_entry(entry)
 
-        # ✅ Форматируйте сообщение (с полным текстом и несколькими ценами)
+        # Форматируйте сообщение
         formatted_msg = AdvancedMessageFormatter.format_professional_news(
             title=title,
-            summary=summary,  # ✅ ПОЛНЫЙ текст, не обрезанный
+            summary=summary,
             source=source,
             source_url=source_url,
-            prices=prices,  # ✅ Несколько цен: BTC, ETH, SOL
-            sentiment=sentiment,
+            prices=prices,
+            fear_greed=fear_greed,  # ✅ НОВОЕ
             image_url=image_url,
         )
 
-        # ✅ Создайте сообщение (фото отправляется ВМЕСТЕ с текстом)
+        # ✅ ИСПРАВЛЕНО: Убраны GIF
         rich_msg = RichMediaMessage(
             text=formatted_msg["text"],
             image_url=formatted_msg["image_url"],
-            gif_query=formatted_msg["gif_query"],
         )
 
         # Отправьте сообщение
@@ -96,7 +87,7 @@ async def send_rich_news(
         return success
 
     except Exception as e:
-        logger.error(f"❌ Ошибка отправки: {e}")
+        logger.error(f"❌ Ошибка отправки: {e}", exc_info=True)
         return False
 
 
@@ -106,7 +97,13 @@ async def parse_and_post_news():
         logger.info("🔍 Парсинг новостей...")
 
         news_list = await rss_parser.get_all_news()
-        logger.info(f"📊 Найдено {len(news_list)} новостей")
+        logger.info(f"📊 Найдено {len(news_list)} релевантных новостей")
+
+        if not news_list:
+            logger.warning("⚠️ Нет новостей для публикации")
+            return
+
+        posted_count = 0
 
         for news in news_list:
             # Проверка на дубликаты
@@ -125,7 +122,7 @@ async def parse_and_post_news():
             if not added:
                 continue
 
-            logger.info(f"➕ Добавлена: {news['title'][:30]}...")
+            logger.info(f"➕ Добавлена: {news['title'][:50]}...")
 
             # Отправьте в Telegram
             success = await send_rich_news(
@@ -138,17 +135,29 @@ async def parse_and_post_news():
 
             if success:
                 await db.mark_as_posted(news['link'])
+                posted_count += 1
 
-            # Rate limiting
-            await asyncio.sleep(2)
+            # ✅ Rate limiting между постами (5 секунд)
+            await asyncio.sleep(5)
+
+        logger.info(f"✅ Опубликовано {posted_count} новостей")
 
     except Exception as e:
-        logger.error(f"❌ Ошибка парсинга: {e}")
+        logger.error(f"❌ Ошибка парсинга: {e}", exc_info=True)
 
 
 async def startup():
     """Инициализация при запуске"""
     logger.info("🚀 Запуск бота...")
+
+    # ✅ Проверка .env переменных
+    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "your_token_here":
+        logger.error("❌ TELEGRAM_BOT_TOKEN не установлен в .env")
+        raise ValueError("TELEGRAM_BOT_TOKEN обязателен")
+
+    if TELEGRAM_CHANNEL_ID == -100000000000:
+        logger.error("❌ TELEGRAM_CHANNEL_ID не установлен в .env")
+        raise ValueError("TELEGRAM_CHANNEL_ID обязателен")
 
     await db.init()
     logger.info("✅ БД инициализирована")
@@ -160,20 +169,24 @@ async def startup():
         logger.error(f"❌ Ошибка Telegram: {e}")
         raise
 
-    logger.info("✅ Русскоязычные источники включены")
-    logger.info("✅ Поддержка изображений включена (отправляется вместе с текстом)")
-    logger.info("✅ Цены: BTC, ETH, SOL включены")
-    logger.info("✅ Ссылка встроена в слово [источник](...)")
-    logger.info("✅ GIF визуализация включена")
+    logger.info("✅ Русскоязычные источники: Forklog, Bits.media")
+    logger.info("✅ Фото вместе с текстом")
+    logger.info("✅ Цены: BTC, ETH, SOL (с кэшированием)")
+    logger.info("✅ Индекс страха и жадности")
+    logger.info("✅ Ссылка встроена в слово источника")
+    logger.info("✅ BLEXLER ЧАТ со ссылкой")
 
+    # ✅ ИСПРАВЛЕНО: Увеличен интервал scheduler для предотвращения пропусков
     scheduler.add_job(
         parse_and_post_news,
         IntervalTrigger(seconds=PARSE_INTERVAL),
         id="news_parser",
         name="Парсинг криптовалютных новостей",
-        replace_existing=True
+        replace_existing=True,
+        max_instances=1,  # ✅ Только один экземпляр одновременно
+        coalesce=True,  # ✅ Объединить пропущенные запуски
     )
-    logger.info(f"⏰ Интервал проверки: {PARSE_INTERVAL}с")
+    logger.info(f"⏰ Интервал проверки: {PARSE_INTERVAL}с ({PARSE_INTERVAL / 60:.0f} минут)")
 
     scheduler.start()
 
@@ -191,6 +204,8 @@ async def main():
     """Главная функция"""
     try:
         await startup()
+
+        # ✅ Первый парсинг сразу после запуска
         await parse_and_post_news()
 
         while True:
@@ -199,7 +214,7 @@ async def main():
     except KeyboardInterrupt:
         logger.info("⌨️ Получен сигнал остановки (Ctrl+C)")
     except Exception as e:
-        logger.error(f"❌ Критическая ошибка: {e}")
+        logger.error(f"❌ Критическая ошибка: {e}", exc_info=True)
     finally:
         await shutdown()
 
@@ -207,14 +222,17 @@ async def main():
 if __name__ == "__main__":
     os.makedirs("logs", exist_ok=True)
 
-    logger.info("=" * 70)
-    logger.info("🎯 CRYPTO NEWS TELEGRAM BOT - PROFESSIONAL V3")
-    logger.info("=" * 70)
+    logger.info("=" * 80)
+    logger.info("🎯 CRYPTO NEWS TELEGRAM BOT - FINAL V4")
+    logger.info("=" * 80)
     logger.info("📸 Фото вместе с текстом: ✅")
-    logger.info("💰 Цены BTC, ETH, SOL: ✅")
+    logger.info("💰 Цены BTC, ETH, SOL: ✅ (с кэшированием)")
     logger.info("🔗 Ссылка в слове: ✅")
     logger.info("📄 Полный текст новости: ✅")
-    logger.info("🎬 GIF визуализация: ✅")
-    logger.info("=" * 70)
+    logger.info("😱 Индекс страха и жадности: ✅")
+    logger.info("💬 BLEXLER ЧАТ: ✅")
+    logger.info("🚫 GIF убраны: ✅")
+    logger.info("🧹 Упоминания источников удалены: ✅")
+    logger.info("=" * 80)
 
     asyncio.run(main())
