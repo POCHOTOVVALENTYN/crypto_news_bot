@@ -7,7 +7,6 @@ from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
-# Получите ключ тут: https://aistudio.google.com/
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if GEMINI_API_KEY:
@@ -16,7 +15,15 @@ if GEMINI_API_KEY:
 
 class NewsAnalyzer:
     def __init__(self):
-        self.model = genai.GenerativeModel('gemini-1.5-flash') if GEMINI_API_KEY else None
+        self.model = None
+        if GEMINI_API_KEY:
+            # Пытаемся найти рабочую модель
+            try:
+                # Сначала пробуем Flash (она быстрее)
+                self.model = genai.GenerativeModel('gemini-1.5-flash')
+            except:
+                # Если нет, берем Pro
+                self.model = genai.GenerativeModel('gemini-pro')
 
     async def translate_and_analyze(self, title: str, summary: str) -> Optional[Dict]:
         if not self.model:
@@ -24,34 +31,38 @@ class NewsAnalyzer:
 
         try:
             prompt = f"""
-            Ты редактор крипто-канала. Твоя задача - очистить и перевести новость.
+            Ты редактор крипто-канала. Твоя задача - сделать короткую выжимку новости на русском языке.
 
             Входящие данные:
             Заголовок: {title}
             Текст: {summary}
 
-            Требования:
-            1. Если текст на английском - переведи на русский.
-            2. УДАЛИ любые технические ошибки, куски кода, фразы типа "We have identified the issue".
-            3. УДАЛИ рекламу и "воды".
-            4. Оставь только суть (2-3 предложения).
+            Инструкция:
+            1. Переведи на русский язык.
+            2. Убери "воду", рекламу и технический мусор.
+            3. Оставь 2-3 самых важных предложения. Текст должен быть связным.
+            4. Не используй вводные фразы типа "Эта новость о том...". Сразу к сути.
 
-            Верни ответ строго в JSON:
+            Ответ верни строго в JSON:
             {{
                 "clean_title": "Заголовок на русском",
-                "clean_summary": "Чистая выжимка без мусора",
-                "sentiment": "Bullish" или "Bearish" или "Neutral"
+                "clean_summary": "Текст новости (максимум 800 символов)"
             }}
             """
 
-            # Gemini синхронный, но быстрый. Для aiogram лучше обернуть в to_thread,
-            # но для 1 запроса раз в 15 минут сойдет и так.
-            response = self.model.generate_content(prompt)
+            # Генерируем контент
+            # Важно: используем синхронный вызов в треде, чтобы не блокировать бота
+            import asyncio
+            response = await asyncio.to_thread(self.model.generate_content, prompt)
 
-            # Чистим ответ от markdown ```json ... ```
+            # Чистим ответ от markdown
             text = response.text.replace('```json', '').replace('```', '').strip()
             return json.loads(text)
 
         except Exception as e:
-            logger.error(f"Gemini Error: {e}")
+            # Если конкретная модель не найдена, выводим ошибку, но мягко
+            if "404" in str(e):
+                logger.error("❌ Модель Gemini не найдена. Проверьте API Key или версию библиотеки.")
+            else:
+                logger.error(f"⚠️ Ошибка Gemini: {e}")
             return None

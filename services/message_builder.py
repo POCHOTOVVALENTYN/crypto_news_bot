@@ -249,28 +249,44 @@ class ImageExtractor:
 class AdvancedMessageFormatter:
     """
     Финальное форматирование сообщений для Telegram
-
-    ✅ Индекс страха вместо настроения
-    ✅ Убраны эмодзи возле цен
-    ✅ Убраны GIF
-    ✅ Ссылка встроена в слово источника
-    ✅ BLEXLER ЧАТ со ссылкой
     """
 
     @staticmethod
     def clean_text(text: str) -> str:
-        # 1. Удаляем куски кода или технические сообщения на английском (длинные последовательности латиницы)
-        # Если в строке больше 40 английских символов подряд - вырезаем
-        text = re.sub(r'[A-Za-z\s,\.]{40,}', '', text)
-
-        # 2. Удаляем лишние звездочки и спецсимволы
+        # 1. Удаляем длинные английские технические строки
+        text = re.sub(r'[A-Za-z\s,\.]{50,}', '', text)
+        # 2. Удаляем лишние звездочки
         text = text.replace('*', '')
-
-        # 3. Чистим HTML остатки если есть
+        # 3. Чистим HTML
         text = re.sub(r'<[^>]+>', '', text)
-
+        # 4. Удаляем множественные пробелы
+        text = re.sub(r'\s+', ' ', text)
         return text.strip()
 
+    @staticmethod
+    def smart_truncate(text: str, length: int = 800) -> str:
+        """Обрезает текст по ближайшей точке, чтобы не рвать предложения"""
+        if len(text) <= length:
+            return text
+
+        # Обрезаем жестко
+        cut_text = text[:length]
+
+        # Ищем последнюю точку, восклицательный или вопросительный знак
+        last_sentence_end = max(
+            cut_text.rfind('.'),
+            cut_text.rfind('!'),
+            cut_text.rfind('?')
+        )
+
+        # Если нашли знак препинания во второй половине текста - режем по нему
+        if last_sentence_end > length // 2:
+            return cut_text[:last_sentence_end + 1]
+
+        # Если точек нет (сплошной текст), ставим троеточие
+        return cut_text + "..."
+
+    @staticmethod
     def format_professional_news(
             title: str,
             summary: str,
@@ -281,45 +297,32 @@ class AdvancedMessageFormatter:
             image_url: Optional[str] = None,
             language: str = "ru"
     ) -> Dict:
-        """
-        Форматируйте новость профессионально
+        # Укоротите заголовок
+        title_display = title[:150]  # Увеличили лимит заголовка
 
-        Возвращает:
-        {
-            "text": основной текст,
-            "image_url": URL изображения,
-        }
-        """
-
-        # Укоротите заголовок до 100 символов
-        title_display = title[:100] + "..." if len(title) > 100 else title
-        # Применяем очистку текста
+        # 1. Сначала чистим
         summary = AdvancedMessageFormatter.clean_text(summary)
-        # Ограничьте summary до 400 символов
-        summary_display = summary[:400] + "..." if len(summary) > 400 else summary
 
-        # Экранируем спецсимволы, чтобы не сломать HTML
+        # 2. Потом применяем "Умную обрезку" до 800 символов
+        # (Лимит Telegram Caption = 1024, оставляем 200 под цены и ссылки)
+        summary_display = AdvancedMessageFormatter.smart_truncate(summary, length=800)
+
+        # Экранируем HTML
         from html import escape
         title_safe = escape(title_display)
         summary_safe = escape(summary_display)
 
         message = f"🔔 <b>{title_safe}</b>\n\n{summary_safe}\n"
 
-
-        # ✅ НОВОЕ: Добавьте индекс страха
         if fear_greed:
-            message += f"\n{fear_greed['emoji']} Индекс страха: {fear_greed['value']}/100 ({fear_greed['label']})\n"
+            message += f"\n{fear_greed['emoji']} Индекс страха: {fear_greed['value']}/100\n"
 
-        # Добавьте цены
         if prices:
             prices_str = CryptoMultiPriceTracker.format_multi_prices(prices)
             if prices_str:
                 message += f"\n{prices_str}\n"
 
-        # Ссылка на источник (HTML):
         message += f"\n📰 Источник: <a href='{source_url}'>{source}</a>\n"
-
-        # Ссылка на чат (HTML):
         message += f"\n💬 <a href='https://t.me/+hwsBvRtEj2w3NTli'>BLEXLER ЧАТ</a>"
 
         return {
