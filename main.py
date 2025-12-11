@@ -46,20 +46,40 @@ rate_limiter = RateLimiter(min_interval_seconds=300)  # 5 минут
 # --- Команды бота ---
 @router.message(Command("stats"))
 async def cmd_stats(message):
-    total = await db.execute("SELECT COUNT(*) FROM news")
-    posted = await db.execute("SELECT COUNT(*) FROM news WHERE posted_to_telegram=1")
-    # Используем cursor.fetchone() для получения значения
-    # (в вашем прошлом коде это не сработало бы, т.к. execute возвращает курсор)
-    async with aiosqlite.connect(db.db_path) as conn:
-        async with conn.execute("SELECT COUNT(*) FROM news") as cursor:
-            total = (await cursor.fetchone())[0]
-        async with conn.execute("SELECT COUNT(*) FROM news WHERE posted_to_telegram=1") as cursor:
-            posted = (await cursor.fetchone())[0]
+    """Статистика бота"""
+    try:
+        # Теперь метод execute существует в db
+        total = await db.execute("SELECT COUNT(*) FROM news")
+        posted = await db.execute("SELECT COUNT(*) FROM news WHERE posted_to_telegram=1")
 
-    await message.answer(f"📊 Статистика:\nВсего: {total}\nОпубликовано: {posted}\nВ очереди: {total - posted}")
-
+        await message.answer(
+            f"📊 <b>Статистика:</b>\n"
+            f"Всего новостей: {total}\n"
+            f"Опубликовано: {posted}\n"
+            f"В очереди: {total - posted}",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка stats: {e}")
+        await message.answer("⚠️ Ошибка получения статистики")
 
 dp.include_router(router)  # ✅ Подключаем роутер
+
+@router.message(Command("sources"))
+async def cmd_sources(message):
+    """Список источников"""
+    try:
+        rows = await db.execute(
+            "SELECT source, COUNT(*) as cnt FROM news GROUP BY source ORDER BY cnt DESC LIMIT 10"
+        )
+        text = "📡 <b>Топ источников:</b>\n\n"
+        for source, count in rows:
+            text += f"▪️ {source}: {count}\n"
+
+        await message.answer(text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Ошибка sources: {e}")
+        await message.answer("⚠️ Ошибка получения источников")
 
 
 # --- Логика парсинга и постинга ---

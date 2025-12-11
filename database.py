@@ -11,6 +11,7 @@ class NewsDatabase:
     def __init__(self):
         self.db_path = DB_PATH
 
+
     async def init(self):
         async with aiosqlite.connect(self.db_path) as db:
             # Добавили колонку priority (0 - обычно, 1 - молния)
@@ -30,6 +31,18 @@ class NewsDatabase:
                              )
                              """)
             await db.commit()
+
+    async def execute(self, query: str, args=()):
+        """Выполняет SQL запрос и возвращает результат (для статистики)"""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(query, args) as cursor:
+                # Если это SELECT count(*), возвращаем число
+                if "SELECT COUNT" in query.upper():
+                    row = await cursor.fetchone()
+                    return row[0] if row else 0
+                # Иначе возвращаем все строки
+                return await cursor.fetchall()
+
 
     async def news_exists(self, url: str) -> bool:
         async with aiosqlite.connect(self.db_path) as db:
