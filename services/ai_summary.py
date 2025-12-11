@@ -1,14 +1,12 @@
 # services/ai_summary.py
-import json
 import os
 import logging
-from json import loads
+import json
 import google.generativeai as genai
 import asyncio
 from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
-
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 
@@ -18,105 +16,65 @@ class NewsAnalyzer:
         if GEMINI_API_KEY:
             try:
                 genai.configure(api_key=GEMINI_API_KEY)
+                # Ищем модель (упрощенная логика выбора)
+                try:
+                    self.model = genai.GenerativeModel('gemini-1.5-flash')
+                except:
+                    self.model = genai.GenerativeModel('gemini-1.5-flash')
 
-                # 1. Получаем список всех доступных моделей для этого ключа
-                available_models = [m.name for m in genai.list_models() if
-                                    'generateContent' in m.supported_generation_methods]
-                logger.info(f"📋 Доступные модели Gemini: {available_models}")
-
-                # 2. Ищем лучшую из доступных
-                target_model = None
-                # Приоритет моделей (от новой к старой)
-                priority_list = ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro']
-
-                for model_name in priority_list:
-                    if model_name in available_models:
-                        target_model = model_name
-                        break
-
-                # Если ничего из списка нет, берем первую попавшуюся
-                if not target_model and available_models:
-                    target_model = available_models[0]
-
-                if target_model:
-                    self.model = genai.GenerativeModel(target_model)
-                    logger.info(f"✅ Выбрана модель Gemini: {target_model}")
-                else:
-                    logger.error("❌ Нет доступных моделей Gemini для этого ключа")
-
+                logger.info("✅ ИИ Аналитик готов к работе")
             except Exception as e:
                 logger.error(f"❌ Ошибка инициализации Gemini: {e}")
 
-    async def process_incoming_news(self, raw_text: str) -> Optional[Dict]:
-        """
-        Фильтрует и переводит входящие молнии.
-        Возвращает None, если новость неважная.
-        """
+    async def analyze_text(self, text: str, context: str = "news") -> Optional[Dict]:
+        """Универсальный метод анализа"""
         if not self.model:
             return None
 
+        prompt = f"""
+        Ты - профессиональный крипто-трейдер. Проанализируй текст.
+
+        Текст: "{text}"
+
+        Задачи:
+        1. Переведи суть на русский язык (коротко, без воды, стиль Bloomberg).
+        2. Определи влияние на рынок: High (важно) или Low (шум).
+        3. На какую монету влияет? (Например: BTC, ETH, DOGE, или Market).
+        4. Настроение: Bullish (рост) 🟢, Bearish (падение) 🔴, Neutral ⚪️.
+
+        Ответ ТОЛЬКО JSON:
+        {{
+            "ru_title": "Заголовок (до 10 слов)",
+            "ru_summary": "Суть новости (до 2 предложений)",
+            "importance": "High/Low",
+            "coin": "BTC",
+            "sentiment": "Bullish"
+        }}
+        """
+
         try:
-            prompt = f"""
-            Ты - элитный крипто-трейдер. Твоя задача - отфильтровать шум и выдать только важные новости.
-
-            Входящий текст: "{raw_text}"
-
-            Алгоритм:
-            1. Это ВАЖНАЯ новость для рынка (цена, регулирование, взломы, листинги, Илон Маск про крипту)?
-            2. Если НЕТ (реклама, спам, приветствия, вода) -> Верни JSON с "is_relevant": false.
-            3. Если ДА -> Переведи на русский язык (сухо, факты, без воды).
-
-            Верни ТОЛЬКО JSON:
-            {{
-                "is_relevant": true/false,
-                "ru_title": "Короткий заголовок (до 10 слов)",
-                "ru_summary": "Суть новости (1-2 предложения)"
-            }}
-            """
-
-            # Запускаем в потоке
             response = await asyncio.to_thread(self.model.generate_content, prompt)
-            text = response.text.replace('```json', '').replace('```', '').strip()
-            result = json.loads(text)
-
-            if result.get("is_relevant") is True:
-                return result
-            return None
-
+            clean_json = response.text.replace('```json', '').replace('```', '').strip()
+            return json.loads(clean_json)
         except Exception as e:
-            logger.error(f"⚠️ Ошибка AI фильтрации: {e}")
+            logger.error(f"AI Error: {e}")
             return None
 
+    # Обертки для совместимости
+    async def process_incoming_news(self, raw_text: str) -> Optional[Dict]:
+        result = await self.analyze_text(raw_text)
+        if result and result.get('importance') == 'High':
+            return result
+        return None
 
     async def translate_and_analyze(self, title: str, summary: str) -> Optional[Dict]:
-        if not self.model:
-            return None
-
-        try:
-            prompt = f"""
-            Ты редактор крипто-новостей. Сделай краткую выжимку на русском.
-
-            Заголовок: {title}
-            Текст: {summary}
-
-            Задача:
-            1. Переведи на русский.
-            2. Оставь только факты, убери "воду".
-            3. Максимум 3 предложения.
-
-            Ответ ТОЛЬКО JSON:
-            {{
-                "clean_title": "Заголовок на русском",
-                "clean_summary": "Текст выжимки"
-            }}
-            """
-
-            # Запускаем в отдельном потоке, чтобы не тормозить бота
-            response = await asyncio.to_thread(self.model.generate_content, prompt)
-
-            text = response.text.replace('```json', '').replace('```', '').strip()
-            return loads(text)
-
-        except Exception as e:
-            logger.error(f"⚠️ Ошибка генерации Gemini: {e}")
-            return None
+        text = f"{title}. {summary}"
+        result = await self.analyze_text(text)
+        if result:
+            return {
+                "clean_title": result['ru_title'],
+                "clean_summary": result['ru_summary'],
+                "coin": result.get('coin'),
+                "sentiment": result.get('sentiment')
+            }
+        return None

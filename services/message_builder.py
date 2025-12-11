@@ -247,50 +247,46 @@ class ImageExtractor:
 
 
 class AdvancedMessageFormatter:
-    """
-    Финальное форматирование сообщений для Telegram
-    """
+    # Карта картинок для монет (можно расширить)
+    COIN_IMAGES = {
+        "BTC": "https://s3.coinmarketcap.com/static-gravity/image/5cc0b99a8095453bb209c2963feb7e82.png",
+        "ETH": "https://s3.coinmarketcap.com/static-gravity/image/28c114dc354e4444983637402dc4db42.png",
+        "SOL": "https://s3.coinmarketcap.com/static-gravity/image/358e2d45387c47d792b0024ba1622325.png",
+        "DOGE": "https://s3.coinmarketcap.com/static-gravity/image/b61920b727404223b207a9e223c70420.png",
+        "General": "https://images.unsplash.com/photo-1621761191319-c6fb62004040?auto=format&fit=crop&w=1000&q=80"
+        # Абстрактная крипта
+    }
 
     @staticmethod
+    def get_coin_image(coin_ticker: str) -> str:
+        """Возвращает картинку для монеты или дефолтную"""
+        return AdvancedMessageFormatter.COIN_IMAGES.get(coin_ticker, AdvancedMessageFormatter.COIN_IMAGES["General"])
+
+    # ... (clean_text и smart_truncate оставляем как были) ...
+    @staticmethod
     def clean_text(text: str) -> str:
-        # 1. Удаляем длинные английские технические строки
-        text = re.sub(r'[A-Za-z\s,\.]{50,}', '', text)
-        # 2. Удаляем лишние звездочки
-        text = text.replace('*', '')
-        # 3. Чистим HTML
+        # Убираем HTML теги
         text = re.sub(r'<[^>]+>', '', text)
-        # 4. Удаляем множественные пробелы
-        text = re.sub(r'\s+', ' ', text)
+        # Убираем длинные технические строки (коды, ошибки)
+        text = re.sub(r'[A-Za-z0-9+/=]{20,}', '', text)
+        # Убираем лишние символы Markdown
+        text = text.replace('*', '').replace('_', '').replace('`', '')
+        # Убираем ссылки в тексте (обычно они мусорные)
+        text = re.sub(r'http\S+', '', text)
+        # Убираем множественные пробелы и переносы
+        text = re.sub(r'\n\s*\n', '\n\n', text)
+        text = re.sub(r' +', ' ', text)
         return text.strip()
 
     @staticmethod
     def smart_truncate(text: str, length: int = 950) -> str:
-        """Обрезает текст умно: ищет конец предложения"""
-        if len(text) <= length:
-            return text
-
-        # Берем кусок с запасом
+        if len(text) <= length: return text
         cut_text = text[:length]
-
-        # Список знаков препинания, на которых можно закончить
-        endings = ['. ', '! ', '? ', '\n']
-
-        last_end = -1
-        for char in endings:
-            pos = cut_text.rfind(char)
-            if pos > last_end:
-                last_end = pos
-
-        # Если нашли конец предложения во второй половине текста
-        if last_end > length // 2:
-            return cut_text[:last_end + 1]  # +1 чтобы захватить точку
-
-        # Если предложений нет, режем по пробелу
-        last_space = cut_text.rfind(' ')
-        if last_space > length // 2:
-            return cut_text[:last_space] + "..."
-
+        last_end = max(cut_text.rfind('.'), cut_text.rfind('!'), cut_text.rfind('?'))
+        if last_end > length // 2: return cut_text[:last_end + 1]
         return cut_text + "..."
+
+        # services/message_builder.py
 
     @staticmethod
     def format_professional_news(
@@ -301,39 +297,73 @@ class AdvancedMessageFormatter:
             prices: Optional[Dict] = None,
             fear_greed: Optional[Dict] = None,
             image_url: Optional[str] = None,
-            language: str = "ru"
+            ai_data: Optional[Dict] = None
     ) -> Dict:
-        # Укоротите заголовок
-        title_display = title[:150]  # Увеличили лимит заголовка
 
-        # 1. Сначала чистим
-        summary = AdvancedMessageFormatter.clean_text(summary)
+        # 1. Готовим "обвес" (цены, ссылки, футер)
+        footer = ""
 
-        # 2. Потом применяем "Умную обрезку" до 800 символов
-        # (Лимит Telegram Caption = 1024, оставляем 200 под цены и ссылки)
-        summary_display = AdvancedMessageFormatter.smart_truncate(summary, length=950)
-
-        # Экранируем HTML
-        from html import escape
-        title_safe = escape(title_display)
-        summary_safe = escape(summary_display)
-
-        message = f"🔔 <b>{title_safe}</b>\n\n{summary_safe}\n"
+        # Инфо-блок
+        if ai_data and ai_data.get("sentiment"):
+            footer += f"\n📊 <b>Настроение:</b> {ai_data['sentiment']}"
 
         if fear_greed:
-            message += f"\n{fear_greed['emoji']} Индекс страха: {fear_greed['value']}/100\n"
+            footer += f"\n😱 <b>Индекс страха:</b> {fear_greed['value']}/100\n"
 
         if prices:
             prices_str = CryptoMultiPriceTracker.format_multi_prices(prices)
             if prices_str:
-                message += f"\n{prices_str}\n"
+                footer += f"\n{prices_str}\n"
 
-        message += f"\n📰 Источник: <a href='{source_url}'>{source}</a>\n"
-        message += f"\n💬 <a href='https://t.me/+hwsBvRtEj2w3NTli'>BLEXLER ЧАТ</a>"
+        footer += f"\n📰 Источник: <a href='{source_url}'>{source}</a>"
+        footer += f"\n💬 <a href='https://t.me/+hwsBvRtEj2w3NTli'>BLEXLER ЧАТ</a>"
+
+        # 2. Обработка Заголовка
+        sentiment_emoji = "🔔"
+        coin_tag = ""
+
+        if ai_data:
+            sentiment = ai_data.get("sentiment", "Neutral")
+            coin = ai_data.get("coin", "")
+
+            if "Bullish" in sentiment:
+                sentiment_emoji = "🟢"
+            elif "Bearish" in sentiment:
+                sentiment_emoji = "🔴"
+
+            if coin and coin != "Market":
+                coin_tag = f"#{coin}"
+                if not image_url:
+                    image_url = AdvancedMessageFormatter.get_coin_image(coin)
+
+        if not image_url:
+            image_url = AdvancedMessageFormatter.COIN_IMAGES["General"]
+
+        title_display = title[:100]  # Ограничим заголовок 100 символами
+
+        # Заголовок сообщения
+        header = f"{sentiment_emoji} <b>{title_display}</b> {coin_tag}\n\n"
+
+        # 3. МАТЕМАТИКА ЛИМИТОВ (Самое важное!)
+        # Лимит Telegram Caption = 1024 символа.
+        # Вычисляем: 1024 - длина_заголовка - длина_футера - 50 (запас)
+        used_length = len(header) + len(footer)
+        available_length = 1024 - used_length - 50
+
+        # Если места мало (меньше 200), ставим минимум 200, но тогда придется резать футер (редкий кейс)
+        if available_length < 200:
+            available_length = 200
+
+            # 4. Чистка и обрезка Summary под точный размер
+        summary = AdvancedMessageFormatter.clean_text(summary)
+        summary_display = AdvancedMessageFormatter.smart_truncate(summary, length=available_length)
+
+        # 5. Финальная сборка
+        message = f"{header}{summary_display}\n{footer}"
 
         return {
             "text": message,
-            "image_url": image_url if ImageExtractor.is_valid_image_url(image_url) else None,
+            "image_url": image_url,
         }
 
 

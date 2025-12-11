@@ -79,49 +79,63 @@ async def scheduled_parsing():
 
 async def check_queue_and_post():
     """
-    Эта функция запускается КАЖДУЮ МИНУТУ.
-    Она проверяет, можно ли уже постить (прошло ли 5 минут) и есть ли что постить.
+    Проверяет очередь.
+    ПРИОРИТЕТ 1 (Инсайд) -> Публикует МГНОВЕННО, игнорируя таймер.
+    ПРИОРИТЕТ 0 (RSS)    -> Публикует только если прошел таймер (5 мин).
     """
     try:
-        # 1. Проверяем таймер (прошло ли 5 минут с прошлого поста?)
-        if not rate_limiter.can_post():
-            wait_time = rate_limiter.get_wait_time()
-            # Логируем только раз в минуту, чтобы видеть, что бот жив
-            logger.info(f"⏳ Ждем таймер: осталось {wait_time} сек")
-            return
+        # 1. Сначала ищем ГОРЯЧИЕ новости (Priority = 1)
+        hot_news = await db.get_hot_news()
 
-        # 2. Проверяем БД на наличие новостей
-        news_item = await db.get_oldest_unposted_news()
+        if hot_news:
+            logger.info(f"🔥 НАЙДЕНА ВАЖНАЯ НОВОСТЬ! Пропуск таймера: {hot_news['title'][:30]}")
+            news_item = hot_news
+            is_hot = True
+        else:
+            # 2. Если горячих нет, проверяем таймер для обычных
+            if not rate_limiter.can_post():
+                # Логируем редко, чтобы не спамить
+                if datetime.now().second < 5:
+                    logger.info(f"⏳ Ждем таймер...")
+                return
+
+            # Берем обычную новость
+            news_item = await db.get_oldest_unposted_news()
+            is_hot = False
 
         if not news_item:
-            logger.info("📭 Очередь пуста. Ждем новых новостей от парсера.")
             return
 
-        # ================= НАЧАЛО ПУБЛИКАЦИИ =================
-        logger.info(f"🚀 Время пришло! Публикую: {news_item['title'][:30]}...")
+        # ================= ПУБЛИКАЦИЯ =================
+        logger.info(f"🚀 Публикация: {news_item['title'][:30]}...")
 
-        # Данные из БД
         title = news_item['title']
         summary = news_item['summary'] or ""
         source = news_item['source']
         url = news_item['url']
         image_url = news_item['image_url']
 
-        # 3. ИИ Обработка (Gemini)
-        ai_result = await ai_analyzer.translate_and_analyze(title, summary)
+        # 3. ИИ Анализ (получаем настроение и монету для оформления)
+        # Так как Listener уже перевел текст, мы просим ИИ просто дать метаданные
+        # Или, если это RSS, переводим.
 
-        if ai_result:
-            logger.info("✨ ИИ улучшил текст")
-            title = ai_result.get("clean_title", title)
-            summary = ai_result.get("clean_summary", summary)
+        ai_data = None
+        if "Insider" in source:
+            # Инсайд уже переведен, просто анализируем для тегов
+            ai_data = await ai_analyzer.analyze_text(title + " " + summary)
         else:
-            logger.warning("⚠️ ИИ пропущен, используем оригинал")
+            # RSS требует перевода и анализа
+            ai_result = await ai_analyzer.translate_and_analyze(title, summary)
+            if ai_result:
+                title = ai_result.get("clean_title", title)
+                summary = ai_result.get("clean_summary", summary)
+                ai_data = ai_result  # тут есть coin и sentiment
 
         # 4. Рыночные данные
         prices = await get_multiple_crypto_prices()
         fear_greed = await FearGreedIndexTracker.get_fear_greed_index()
 
-        # 5. Сборка сообщения
+        # 5. Сборка
         formatted_msg = AdvancedMessageFormatter.format_professional_news(
             title=title,
             summary=summary,
@@ -130,6 +144,7 @@ async def check_queue_and_post():
             prices=prices,
             fear_greed=fear_greed,
             image_url=image_url,
+            ai_data=ai_data  # Передаем метаданные
         )
 
         # 6. Отправка
@@ -141,14 +156,17 @@ async def check_queue_and_post():
         success = await rich_msg.send(bot, TELEGRAM_CHANNEL_ID)
 
         if success:
-            # Отмечаем как отправленное
             await db.mark_as_posted(url)
-            # Сбрасываем таймер (засекаем следующие 5 минут)
-            rate_limiter.mark_posted()
-            logger.info(f"✅ Опубликовано. Следующий пост через {POSTING_INTERVAL_MINUTES} мин.")
-        else:
-            logger.error("❌ Ошибка API Telegram при отправке")
-            # Можно добавить логику: если ошибка, попробовать через минуту, не отмечая posted
+
+            if is_hot:
+                logger.info("⚡️ Молния отправлена вне очереди!")
+                # Мы НЕ сбрасываем таймер rate_limiter.mark_posted()
+                # Это позволит обычной новости выйти по своему расписанию, не задерживаясь из-за молнии
+                # ИЛИ можно сбросить, чтобы не частить. Давайте сбросим для безопасности.
+                rate_limiter.mark_posted()
+            else:
+                rate_limiter.mark_posted()
+                logger.info("✅ Обычный пост отправлен.")
 
     except Exception as e:
         logger.error(f"❌ Критическая ошибка в постере: {e}", exc_info=True)

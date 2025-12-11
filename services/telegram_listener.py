@@ -38,37 +38,42 @@ class TelegramListener:
         """Обработка входящего сообщения"""
         try:
             raw_text = event.message.text
-            if not raw_text:
+            if not raw_text or len(raw_text) < 20:  # Игнорируем слишком короткие
                 return
 
             source_name = event.chat.title if event.chat else "Unknown"
-            logger.info(f"⚡️ Поймано сообщение из {source_name}: {raw_text[:30]}...")
+            logger.info(f"⚡️ Поймано сообщение из {source_name}")
 
-            # 1. Проверка на дубликаты (чтобы не обрабатывать одно и то же)
-            # Используем ID сообщения как часть уникального URL
+            # 1. Жесткая проверка URL
             msg_unique_id = f"tg_{event.chat_id}_{event.message.id}"
-
             if await db.news_exists(msg_unique_id):
                 return
 
-            # 2. Фильтрация и перевод через AI
+            # 2. ИИ Обработка
             processed = await self.ai.process_incoming_news(raw_text)
 
             if processed:
-                logger.info(f"✅ AI одобрил: {processed['ru_title']}")
+                title = processed['ru_title']
 
-                # 3. Сохраняем в БД (оно попадет в очередь на отправку)
-                # Для таких новостей можно ставить image_url=None, они текстовые
+                # 3. Умная проверка на дубликаты (Fuzzy)
+                if await db.is_duplicate_by_content(title):
+                    logger.info(f"♻️ Пропуск дубликата: {title}")
+                    return
+
+                logger.info(f"💎 Инсайд принят: {title}")
+
+                # 4. Сохраняем с ВЫСОКИМ приоритетом (priority=1)
                 await db.add_news(
                     url=msg_unique_id,
-                    title=processed['ru_title'],
+                    title=title,
                     summary=processed['ru_summary'],
                     source=f"Insider ({source_name})",
                     published_at="Just now",
-                    image_url=None
+                    image_url=None,  # Картинку подберет MessageBuilder
+                    priority=1  # 🚨 ВАЖНО: Это заставит main.py отправить новость мгновенно
                 )
             else:
-                logger.info("🗑️ AI отфильтровал новость как мусор")
+                logger.debug("Мусор отфильтрован")
 
         except Exception as e:
             logger.error(f"❌ Ошибка в Listener: {e}")
