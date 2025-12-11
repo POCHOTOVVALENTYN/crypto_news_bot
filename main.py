@@ -2,25 +2,24 @@
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta
-from aiogram import Bot
+from aiogram import Bot, Dispatcher, Router
+from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
 from database import db
 from parser.rss_parser import RSSParser
+# Теперь этот импорт сработает корректно
 from services.message_builder import (
     AdvancedMessageFormatter,
     RichMediaMessage,
-    FearGreedIndexTracker
+    FearGreedIndexTracker,
+    get_multiple_crypto_prices,
+    ImageExtractor
 )
 from services.ai_summary import NewsAnalyzer
-# Импортируем наш RateLimiter (он у вас уже есть в файлах)
 from services.rate_limiter import RateLimiter
-from aiogram import Router, F
-from aiogram.filters import Command
-
 from services.telegram_listener import listener
 
 # Логирование
@@ -34,57 +33,42 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Инициализация
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
+dp = Dispatcher()  # ✅ ДОБАВЛЕН Dispatcher
+router = Router()
 rss_parser = RSSParser(use_russian=True)
 scheduler = AsyncIOScheduler()
 ai_analyzer = NewsAnalyzer()
-
-# ✅ НАСТРОЙКА ИНТЕРВАЛОВ
-# Как часто искать новые новости на сайтах (минуты)
-PARSING_INTERVAL_MINUTES = 10
-# Как часто публиковать новости в канал (минуты)
-POSTING_INTERVAL_MINUTES = 5
-
-# Инициализируем лимитер (300 секунд = 5 минут)
-rate_limiter = RateLimiter(min_interval_seconds=POSTING_INTERVAL_MINUTES * 60)
-
-router = Router()
+rate_limiter = RateLimiter(min_interval_seconds=300)  # 5 минут
 
 
+# --- Команды бота ---
 @router.message(Command("stats"))
 async def cmd_stats(message):
-    """Статистика бота"""
     total = await db.execute("SELECT COUNT(*) FROM news")
     posted = await db.execute("SELECT COUNT(*) FROM news WHERE posted_to_telegram=1")
+    # Используем cursor.fetchone() для получения значения
+    # (в вашем прошлом коде это не сработало бы, т.к. execute возвращает курсор)
+    async with aiosqlite.connect(db.db_path) as conn:
+        async with conn.execute("SELECT COUNT(*) FROM news") as cursor:
+            total = (await cursor.fetchone())[0]
+        async with conn.execute("SELECT COUNT(*) FROM news WHERE posted_to_telegram=1") as cursor:
+            posted = (await cursor.fetchone())[0]
 
-    await message.answer(
-        f"📊 Статистика:\n"
-        f"Всего новостей: {total}\n"
-        f"Опубликовано: {posted}\n"
-        f"В очереди: {total - posted}"
-    )
-
-
-@router.message(Command("sources"))
-async def cmd_sources(message):
-    """Список источников"""
-    sources = await db.execute(
-        "SELECT source, COUNT(*) as cnt FROM news GROUP BY source ORDER BY cnt DESC"
-    )
-    text = "📡 Источники:\n\n"
-    for source, count in sources:
-        text += f"{source}: {count}\n"
-
-    await message.answer(text)
+    await message.answer(f"📊 Статистика:\nВсего: {total}\nОпубликовано: {posted}\nВ очереди: {total - posted}")
 
 
+dp.include_router(router)  # ✅ Подключаем роутер
+
+
+# --- Логика парсинга и постинга ---
 async def scheduled_parsing():
-    """Сбор новостей в базу"""
+    """Сбор новостей"""
     try:
         logger.info("🔍 Парсер: ищу свежие новости...")
         news_list = await rss_parser.get_all_news()
-
-        new_count = 0
+        count = 0
         for news in news_list:
             if not await db.news_exists(news['link']):
                 await db.add_news(
@@ -95,172 +79,97 @@ async def scheduled_parsing():
                     published_at=news['published'],
                     image_url=news['image_url']
                 )
-                new_count += 1
-                logger.info(f"📥 В очередь: {news['title'][:30]}...")
-
-        if new_count > 0:
-            logger.info(f"💾 Сохранено {new_count} новых новостей. Очередь пополнена.")
-        else:
-            logger.info("💤 Новых новостей на сайтах нет.")
-
+                count += 1
+        if count > 0: logger.info(f"📥 Добавлено {count} новостей")
     except Exception as e:
-        logger.error(f"❌ Ошибка парсинга: {e}")
+        logger.error(f"Ошибка парсинга: {e}")
 
 
 async def check_queue_and_post():
-    """
-    Проверяет очередь.
-    ПРИОРИТЕТ 1 (Инсайд) -> Публикует МГНОВЕННО, игнорируя таймер.
-    ПРИОРИТЕТ 0 (RSS)    -> Публикует только если прошел таймер (5 мин).
-    """
+    """Проверка очереди"""
     try:
-        # 1. Сначала ищем ГОРЯЧИЕ новости (Priority = 1)
+        # 1. Горячие новости (вне очереди)
         hot_news = await db.get_hot_news()
+        is_hot = False
 
         if hot_news:
-            logger.info(f"🔥 НАЙДЕНА ВАЖНАЯ НОВОСТЬ! Пропуск таймера: {hot_news['title'][:30]}")
             news_item = hot_news
             is_hot = True
+            logger.info("🔥 Молния! Публикую вне очереди.")
         else:
-            # 2. Если горячих нет, проверяем таймер для обычных
+            # 2. Обычные новости (по таймеру)
             if not rate_limiter.can_post():
-                # Логируем редко, чтобы не спамить
-                if datetime.now().second < 5:
-                    logger.info(f"⏳ Ждем таймер...")
                 return
-
-            # Берем обычную новость
             news_item = await db.get_oldest_unposted_news()
-            is_hot = False
 
-        if not news_item:
-            return
+        if not news_item: return
 
-        # ================= ПУБЛИКАЦИЯ =================
-        logger.info(f"🚀 Публикация: {news_item['title'][:30]}...")
+        # Публикация
+        logger.info(f"🚀 Публикация: {news_item['title'][:30]}")
 
-        title = news_item['title']
-        summary = news_item['summary'] or ""
-        source = news_item['source']
-        url = news_item['url']
-        image_url = news_item['image_url']
-
-        # 3. ИИ Анализ (получаем настроение и монету для оформления)
-        # Так как Listener уже перевел текст, мы просим ИИ просто дать метаданные
-        # Или, если это RSS, переводим.
-
+        # Подготовка данных
         ai_data = None
-        if "Insider" in source:
-            # Инсайд уже переведен, просто анализируем для тегов
-            ai_data = await ai_analyzer.analyze_text(title + " " + summary)
+        if "Insider" in news_item['source']:
+            ai_data = await ai_analyzer.analyze_text(news_item['title'] + " " + news_item['summary'])
         else:
-            # RSS требует перевода и анализа
-            ai_result = await ai_analyzer.translate_and_analyze(title, summary)
+            ai_result = await ai_analyzer.translate_and_analyze(news_item['title'], news_item['summary'])
             if ai_result:
-                title = ai_result.get("clean_title", title)
-                summary = ai_result.get("clean_summary", summary)
-                ai_data = ai_result  # тут есть coin и sentiment
+                news_item['title'] = ai_result.get('clean_title', news_item['title'])
+                news_item['summary'] = ai_result.get('clean_summary', news_item['summary'])
+                ai_data = ai_result
 
-        # 4. Рыночные данные
         prices = await get_multiple_crypto_prices()
         fear_greed = await FearGreedIndexTracker.get_fear_greed_index()
 
-        # 5. Сборка
-        formatted_msg = AdvancedMessageFormatter.format_professional_news(
-            title=title,
-            summary=summary,
-            source=source,
-            source_url=url,
+        msg_data = AdvancedMessageFormatter.format_professional_news(
+            title=news_item['title'],
+            summary=news_item['summary'],
+            source=news_item['source'],
+            source_url=news_item['url'],
             prices=prices,
             fear_greed=fear_greed,
-            image_url=image_url,
-            ai_data=ai_data  # Передаем метаданные
+            image_url=news_item['image_url'],
+            ai_data=ai_data
         )
 
-        # 6. Отправка
-        rich_msg = RichMediaMessage(
-            text=formatted_msg["text"],
-            image_url=formatted_msg["image_url"],
-        )
-
-        success = await rich_msg.send(bot, TELEGRAM_CHANNEL_ID)
-
-        if success:
-            await db.mark_as_posted(url)
-
-            if is_hot:
-                logger.info("⚡️ Молния отправлена вне очереди!")
-                # Мы НЕ сбрасываем таймер rate_limiter.mark_posted()
-                # Это позволит обычной новости выйти по своему расписанию, не задерживаясь из-за молнии
-                # ИЛИ можно сбросить, чтобы не частить. Давайте сбросим для безопасности.
+        rich_msg = RichMediaMessage(msg_data['text'], msg_data['image_url'])
+        if await rich_msg.send(bot, TELEGRAM_CHANNEL_ID):
+            await db.mark_as_posted(news_item['url'])
+            if not is_hot:
                 rate_limiter.mark_posted()
-            else:
-                rate_limiter.mark_posted()
-                logger.info("✅ Обычный пост отправлен.")
 
     except Exception as e:
-        logger.error(f"❌ Критическая ошибка в постере: {e}", exc_info=True)
+        logger.error(f"Ошибка в постере: {e}", exc_info=True)
 
 
-async def startup():
-    """Инициализация при запуске"""
-    logger.info("🚀 Запуск бота v6.0 (Alpha Hunter)...")
-
+# --- Startup ---
+async def main():
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
-        raise ValueError("Ошибка конфига: нет токена или ID")
+        logger.error("❌ Нет токена или ID канала в .env")
+        return
 
     await db.init()
     logger.info("✅ БД подключена")
 
-    # --- ЗАПУСК USERBOT LISTENER ---
-    # Запускаем прослушку каналов
+    # Запуск Userbot
     asyncio.create_task(listener.start())
-    # -------------------------------
 
-    # === РАСПИСАНИЕ (Остается прежним) ===
-    # 1. Сбор новостей (Раз в 10 минут) - RSS всё равно нужен для фона
-    scheduler.add_job(
-        scheduled_parsing,
-        IntervalTrigger(minutes=PARSING_INTERVAL_MINUTES),
-        id="parsing_job",
-        replace_existing=True
-    )
-
-    # 2. Проверка очереди - СДЕЛАЕМ ЧАЩЕ для быстрых новостей
-    # Проверяем каждые 30 секунд, чтобы инсайды вылетали быстрее
-    scheduler.add_job(
-        check_queue_and_post,
-        IntervalTrigger(seconds=30),
-        id="queue_checker",
-        replace_existing=True
-    )
-
-    logger.info(f"⏰ Парсинг RSS: каждые {PARSING_INTERVAL_MINUTES} мин")
-    logger.info(f"⏰ Проверка очереди: каждые 30 сек")
-
+    # Планировщик
+    scheduler.add_job(scheduled_parsing, IntervalTrigger(minutes=10))
+    scheduler.add_job(check_queue_and_post, IntervalTrigger(seconds=30))
     scheduler.start()
 
+    # Первый прогон
     asyncio.create_task(scheduled_parsing())
     asyncio.create_task(check_queue_and_post())
 
-
-async def shutdown():
-    logger.info("🛑 Остановка...")
-    if scheduler.running:
-        scheduler.shutdown()
-    await bot.session.close()
-
-
-async def main():
-    try:
-        await startup()
-        while True:
-            await asyncio.sleep(1)
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("👋 Бот остановлен")
-    finally:
-        await shutdown()
+    # ✅ Запуск Polling (блокирует выполнение, держит бота активным)
+    logger.info("🚀 Бот запущен (Polling)")
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
+    # Импорт aiosqlite нужен внутри cmd_stats, добавим его если нет в глобальных
+    import aiosqlite
+
     asyncio.run(main())
