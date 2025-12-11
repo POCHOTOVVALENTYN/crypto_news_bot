@@ -111,6 +111,45 @@ class TelegramListener:
         """Обработка входящего сообщения"""
         try:
             raw_text = event.message.text
+            if not raw_text: return
+
+            # Определение источника (упрощенно)
+            chat_id = event.chat_id
+            # Можно получить username, если он доступен
+            chat = await event.get_chat()
+            username = chat.username.lower() if chat.username else ""
+
+            # === 🛡️ ПРЕ-ФИЛЬТР (Экономим ИИ) ===
+
+            # 1. Фильтр для Whale Alert (Игнорируем мелочь и USDT-USDC свопы)
+            if "whale" in username:
+                if "USD" in raw_text and "transferred" in raw_text:
+                    # Если сумма меньше 50M - игнор (примерная логика, лучше regex)
+                    # Простой способ: если нет слова "million" или число маленькое
+                    if "50,000,000" not in raw_text and "100,000,000" not in raw_text:
+                         # Это грубый пример, лучше настроить точнее
+                         return
+                if "Minted" in raw_text: # Печать тезера - это важно, оставляем
+                    pass
+                else:
+                    return # Остальное пропускаем
+
+            # 2. Фильтр стоп-слов (Реклама)
+            STOP_WORDS = ["giveaway", "promo", "discount", "join vip", "sign up"]
+            if any(w in raw_text.lower() for w in STOP_WORDS):
+                logger.info(f"🗑️ Сработал стоп-слов фильтр")
+                return
+
+            # 3. Фильтр длины (слишком короткие "Hi", "GM")
+            if len(raw_text) < 15:
+                return
+
+        # === КОНЕЦ ПРЕ-ФИЛЬТРА ===
+
+        source_name = chat.title or "Unknown"
+        logger.info(f"⚡️ Поймано из {source_name}: {raw_text[:30]}...")
+        try:
+            raw_text = event.message.text
 
             # Базовая фильтрация
             if not raw_text or len(raw_text) < 20:
