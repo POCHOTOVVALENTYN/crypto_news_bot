@@ -17,17 +17,16 @@ class NewsAnalyzer:
             try:
                 genai.configure(api_key=GEMINI_API_KEY)
 
-                # ✅ ИСПРАВЛЕНО: Правильные названия моделей
-                # Пробуем разные модели по порядку
+                # ✅ ИСПРАВЛЕНО: Только стабильные названия моделей
                 model_names = [
-                    'gemini-1.5-flash-latest',  # Новая версия
-                    'gemini-1.5-flash',
-                    'gemini-pro',  # Fallback
-                    'gemini-1.0-pro'  # Старая версия
+                    'gemini-1.5-flash',  # Самая стабильная и быстрая
+                    'gemini-1.5-pro',  # Более умная
+                    'gemini-2.0-flash-exp',  # Новейшая (экспериментальная)
                 ]
 
                 for model_name in model_names:
                     try:
+                        # Пробуем инициализировать
                         self.model = genai.GenerativeModel(model_name)
                         logger.info(f"✅ ИИ Аналитик готов: {model_name}")
                         break
@@ -46,94 +45,56 @@ class NewsAnalyzer:
     async def analyze_text(self, text: str, context: str = "news") -> Optional[Dict]:
         """Универсальный метод анализа"""
         if not self.model:
-            logger.debug("ИИ не доступен, пропускаем анализ")
             return None
 
-        # ✅ УЛУЧШЕН ПРОМПТ: Более четкие инструкции
-        prompt = f"""Ты - профессиональный крипто-аналитик Bloomberg Terminal.
+        # Промпт для качественной выжимки
+        prompt = f"""Ты - профессиональный редактор крипто-новостей.
 
-ЗАДАЧА: Проанализируй новость и верни ТОЛЬКО JSON (без текста до/после).
+ЗАДАЧА: Сделай краткий пересказ новости на русском языке.
 
-ТЕКСТ: "{text}"
+ВХОДНОЙ ТЕКСТ: "{text}"
 
-ИНСТРУКЦИЯ:
-1. Переведи на русский (краткий заголовок, 8-12 слов)
-2. Выжимка сути (2-3 предложения, без воды)
-3. Важность: High (влияет на цену) или Low (шум)
-4. Монета: BTC, ETH, SOL, DOGE, XRP, BNB или Market (общее)
-5. Настроение: Bullish 🟢, Bearish 🔴, Neutral ⚪
-"Если новость про листинг, начинай с эмодзи 🚀. Если про взлом - с 🚨. Если про суд/SEC - с ⚖️."
+ТРЕБОВАНИЯ:
+1. Заголовок: Цепляющий, но правдивый (до 10 слов).
+2. Текст: 2-3 предложения. СУТЬ события. Без воды. Без обрывов на полуслове.
+3. Важность: High (влияет на рынок) или Low (проходная).
+4. Тональность: Bullish 🟢 / Bearish 🔴 / Neutral ⚪.
+5. Монета: Тикер (BTC, ETH) или Market.
 
-ФОРМАТ ОТВЕТА:
+ОТВЕТ СТРОГО JSON:
 {{
-    "ru_title": "Краткий заголовок",
-    "ru_summary": "Суть новости в 2-3 предложениях",
+    "ru_title": "Заголовок",
+    "ru_summary": "Текст выжимки.",
     "importance": "High",
     "coin": "BTC",
     "sentiment": "Bullish"
-}}
-
-ТОЛЬКО JSON БЕЗ ЛИШНЕГО ТЕКСТА!"""
+}}"""
 
         try:
-            # ✅ УЛУЧШЕНА ОБРАБОТКА: Добавлен retry и timeout
             response = await asyncio.wait_for(
                 asyncio.to_thread(self.model.generate_content, prompt),
-                timeout=15.0  # 15 секунд максимум
+                timeout=20.0
             )
 
-            # Чистим ответ от markdown
-            clean_json = response.text.strip()
+            clean_json = response.text.replace('```json', '').replace('```', '').strip()
+            return json.loads(clean_json)
 
-            # Убираем возможные обертки
-            if clean_json.startswith('```'):
-                clean_json = clean_json.split('```')[1]
-                if clean_json.startswith('json'):
-                    clean_json = clean_json[4:]
-
-            clean_json = clean_json.strip()
-
-            result = json.loads(clean_json)
-
-            # Валидация результата
-            required_keys = ['ru_title', 'ru_summary', 'importance', 'coin', 'sentiment']
-            if all(key in result for key in required_keys):
-                return result
-            else:
-                logger.warning(f"⚠️ ИИ вернул неполный ответ: {result.keys()}")
-                return None
-
-        except asyncio.TimeoutError:
-            logger.error("⏱️ ИИ не ответил за 15 секунд")
-            return None
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ ИИ вернул невалидный JSON: {e}")
-            logger.debug(f"Ответ: {response.text[:200]}")
-            return None
         except Exception as e:
             logger.error(f"❌ AI Error: {e}")
             return None
 
     async def process_incoming_news(self, raw_text: str) -> Optional[Dict]:
-        """
-        Для Telegram Listener: строгая фильтрация
-        Возвращает результат ТОЛЬКО если importance=High
-        """
-        result = await self.analyze_text(raw_text, context="insider")
-
+        """Для Telegram Listener"""
+        result = await self.analyze_text(raw_text)
+        # Пропускаем через фильтр только если важность высокая
         if result and result.get('importance') == 'High':
-            logger.info(f"✅ ИИ: Важная новость о {result['coin']}")
             return result
-
-        logger.debug("ИИ: Новость не важна (Low)")
         return None
 
     async def translate_and_analyze(self, title: str, summary: str) -> Optional[Dict]:
-        """
-        Для RSS: всегда обрабатываем (нет фильтрации по важности)
-        """
+        """Для RSS"""
         text = f"{title}. {summary}"
-        result = await self.analyze_text(text, context="rss")
+        result = await self.analyze_text(text)
 
         if result:
             return {
@@ -142,11 +103,4 @@ class NewsAnalyzer:
                 "coin": result.get('coin'),
                 "sentiment": result.get('sentiment')
             }
-
-        # Если ИИ не сработал - возвращаем оригинал
-        return {
-            "clean_title": title[:100],
-            "clean_summary": summary[:400],
-            "coin": "Market",
-            "sentiment": "Neutral"
-        }
+        return None

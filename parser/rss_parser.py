@@ -6,31 +6,16 @@ import re
 from typing import List, Dict
 from html import unescape
 
-# ✅ ОБНОВЛЕНО: Проверенные рабочие источники
+# ✅ ОСТАВЛЯЕМ ТОЛЬКО РАБОЧИЕ
 RSS_FEEDS = {
     "Forklog": "https://forklog.com/feed/",
-    # "Bits.media": "https://bits.media/feed/",  # ❌ Не работает
-
-    # ✅ НОВЫЕ РУССКОЯЗЫЧНЫЕ ИСТОЧНИКИ:
-    "RBC Crypto": "https://www.rbc.ru/crypto/rss",
     "Coinspot": "https://coinspot.io/feed/",
 }
 
-# ✅ ДОБАВЛЕНЫ TIER-1 ИСТОЧНИКИ (через RSS)
 TIER_1_FEEDS = {
-    # Bloomberg (требует платную подписку, но RSS есть)
     "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
-
-    # Reuters (крипто секция)
-    "Reuters Crypto": "https://www.reuters.com/technology/rss",
-
-    # Cointelegraph (быстрые)
     "Cointelegraph": "https://cointelegraph.com/rss",
-
-    # Decrypt (качественные)
     "Decrypt": "https://decrypt.co/feed",
-
-    # The Block (институциональные новости)
     "The Block": "https://www.theblock.co/rss.xml",
 }
 

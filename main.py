@@ -13,8 +13,7 @@ from parser.rss_parser import RSSParser
 from services.message_builder import (
     AdvancedMessageFormatter,
     RichMediaMessage,
-    FearGreedIndexTracker,
-    get_multiple_crypto_prices
+    FearGreedIndexTracker
 )
 from services.ai_summary import NewsAnalyzer
 # Импортируем наш RateLimiter (он у вас уже есть в файлах)
