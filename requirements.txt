@@ -7,7 +7,7 @@ apscheduler==3.10.4
 openai==1.40.0
 pydantic==2.5.3
 httpx==0.27.0
-google-generativeai==0.8.3
+google-generativeai>=0.8.3
 telethon==1.34.0
 thefuzz==0.22.1
 python-levenshtein==0.25.0
