@@ -264,26 +264,32 @@ class AdvancedMessageFormatter:
         return text.strip()
 
     @staticmethod
-    def smart_truncate(text: str, length: int = 800) -> str:
-        """Обрезает текст по ближайшей точке, чтобы не рвать предложения"""
+    def smart_truncate(text: str, length: int = 950) -> str:
+        """Обрезает текст умно: ищет конец предложения"""
         if len(text) <= length:
             return text
 
-        # Обрезаем жестко
+        # Берем кусок с запасом
         cut_text = text[:length]
 
-        # Ищем последнюю точку, восклицательный или вопросительный знак
-        last_sentence_end = max(
-            cut_text.rfind('.'),
-            cut_text.rfind('!'),
-            cut_text.rfind('?')
-        )
+        # Список знаков препинания, на которых можно закончить
+        endings = ['. ', '! ', '? ', '\n']
 
-        # Если нашли знак препинания во второй половине текста - режем по нему
-        if last_sentence_end > length // 2:
-            return cut_text[:last_sentence_end + 1]
+        last_end = -1
+        for char in endings:
+            pos = cut_text.rfind(char)
+            if pos > last_end:
+                last_end = pos
 
-        # Если точек нет (сплошной текст), ставим троеточие
+        # Если нашли конец предложения во второй половине текста
+        if last_end > length // 2:
+            return cut_text[:last_end + 1]  # +1 чтобы захватить точку
+
+        # Если предложений нет, режем по пробелу
+        last_space = cut_text.rfind(' ')
+        if last_space > length // 2:
+            return cut_text[:last_space] + "..."
+
         return cut_text + "..."
 
     @staticmethod
@@ -305,7 +311,7 @@ class AdvancedMessageFormatter:
 
         # 2. Потом применяем "Умную обрезку" до 800 символов
         # (Лимит Telegram Caption = 1024, оставляем 200 под цены и ссылки)
-        summary_display = AdvancedMessageFormatter.smart_truncate(summary, length=800)
+        summary_display = AdvancedMessageFormatter.smart_truncate(summary, length=950)
 
         # Экранируем HTML
         from html import escape

@@ -20,6 +20,8 @@ from services.ai_summary import NewsAnalyzer
 # Импортируем наш RateLimiter (он у вас уже есть в файлах)
 from services.rate_limiter import RateLimiter
 
+from services.telegram_listener import start_listener
+
 # Логирование
 logging.basicConfig(
     level=logging.INFO,
@@ -153,8 +155,8 @@ async def check_queue_and_post():
 
 
 async def startup():
-    """Инициализация"""
-    logger.info("🚀 Запуск бота v5.0 (Smart Queue)...")
+    """Инициализация при запуске"""
+    logger.info("🚀 Запуск бота v6.0 (Alpha Hunter)...")
 
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID:
         raise ValueError("Ошибка конфига: нет токена или ID")
@@ -162,9 +164,13 @@ async def startup():
     await db.init()
     logger.info("✅ БД подключена")
 
-    # === РАСПИСАНИЕ ===
+    # --- ЗАПУСК USERBOT LISTENER ---
+    # Запускаем прослушку каналов
+    asyncio.create_task(listener.start())
+    # -------------------------------
 
-    # 1. Сбор новостей (Раз в 10 минут)
+    # === РАСПИСАНИЕ (Остается прежним) ===
+    # 1. Сбор новостей (Раз в 10 минут) - RSS всё равно нужен для фона
     scheduler.add_job(
         scheduled_parsing,
         IntervalTrigger(minutes=PARSING_INTERVAL_MINUTES),
@@ -172,22 +178,21 @@ async def startup():
         replace_existing=True
     )
 
-    # 2. Проверка очереди (Каждую минуту) - Это реализует вашу логику
+    # 2. Проверка очереди - СДЕЛАЕМ ЧАЩЕ для быстрых новостей
+    # Проверяем каждые 30 секунд, чтобы инсайды вылетали быстрее
     scheduler.add_job(
         check_queue_and_post,
-        IntervalTrigger(seconds=60),  # Проверяем часто
+        IntervalTrigger(seconds=30),
         id="queue_checker",
         replace_existing=True
     )
 
-    logger.info(f"⏰ Парсинг: каждые {PARSING_INTERVAL_MINUTES} мин")
-    logger.info(f"⏰ Постинг: очередь раз в {POSTING_INTERVAL_MINUTES} мин")
+    logger.info(f"⏰ Парсинг RSS: каждые {PARSING_INTERVAL_MINUTES} мин")
+    logger.info(f"⏰ Проверка очереди: каждые 30 сек")
 
     scheduler.start()
 
-    # Первый прогон парсинга сразу
     asyncio.create_task(scheduled_parsing())
-    # И сразу пробуем запостить что-то, если есть в базе (не ждем минуту)
     asyncio.create_task(check_queue_and_post())
 
 
