@@ -20,7 +20,7 @@ from services.ai_summary import NewsAnalyzer
 # Импортируем наш RateLimiter (он у вас уже есть в файлах)
 from services.rate_limiter import RateLimiter
 
-from services.telegram_listener import start_listener
+from services.telegram_listener import listener
 
 # Логирование
 logging.basicConfig(
