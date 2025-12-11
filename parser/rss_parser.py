@@ -6,39 +6,69 @@ import re
 from typing import List, Dict
 from html import unescape
 
-# ✅ ИСПРАВЛЕНО: Только рабочие источники
+# ✅ ОБНОВЛЕНО: Проверенные рабочие источники
 RSS_FEEDS = {
     "Forklog": "https://forklog.com/feed/",
-    "Bits.media": "https://bits.media/feed/",
+    # "Bits.media": "https://bits.media/feed/",  # ❌ Не работает
+
+    # ✅ НОВЫЕ РУССКОЯЗЫЧНЫЕ ИСТОЧНИКИ:
+    "RBC Crypto": "https://www.rbc.ru/crypto/rss",
+    "Coinspot": "https://coinspot.io/feed/",
 }
 
-# Английские источники (fallback)
-ENGLISH_FEEDS = {
-    "CoinDesk": "https://www.coindesk.com/feed",
+# ✅ ДОБАВЛЕНЫ TIER-1 ИСТОЧНИКИ (через RSS)
+TIER_1_FEEDS = {
+    # Bloomberg (требует платную подписку, но RSS есть)
+    "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+
+    # Reuters (крипто секция)
+    "Reuters Crypto": "https://www.reuters.com/technology/rss",
+
+    # Cointelegraph (быстрые)
     "Cointelegraph": "https://cointelegraph.com/rss",
+
+    # Decrypt (качественные)
     "Decrypt": "https://decrypt.co/feed",
+
+    # The Block (институциональные новости)
+    "The Block": "https://www.theblock.co/rss.xml",
 }
 
+# ✅ WHITELIST расширен
 WHITELIST_KEYWORDS = [
+    # Криптовалюты
     "bitcoin", "ethereum", "btc", "eth", "crypto", "blockchain",
-    "sec", "regulation", "trading", "market", "price", "exchange",
-    "ripple", "xrp", "solana", "cardano", "polygon", "bnb", "usdt",
-    "крипто", "биткойн", "эфириум", "блокчейн", "торговля",
-    "рынок", "цена", "обмен", "регуляция", "майнинг",
+    "solana", "cardano", "polygon", "bnb", "usdt", "usdc",
+    "ripple", "xrp", "doge", "dogecoin", "shib", "ada", "dot",
+
+    # Регуляция
+    "sec", "regulation", "регуляция", "законодательство",
+    "trump", "трамп", "biden", "байден", "congress", "конгресс",
+
+    # Компании
+    "coinbase", "binance", "bybit", "okx", "kraken",
+    "microstrategy", "tesla", "blackrock", "grayscale",
+
+    # События
+    "etf", "listing", "листинг", "hack", "взлом",
+    "trading", "торговля", "market", "рынок", "price", "цена",
+
+    # Русский
+    "крипто", "биткойн", "эфириум", "блокчейн",
+    "биржа", "обмен", "майнинг",
 ]
 
 BLACKLIST_KEYWORDS = [
     "nft collection", "airdrop", "presale", "promo", "giveaway",
-    "casino", "gambling", "lottery", "scam",
-    "гивэвей", "казино", "лотерея", "пампинг", "схема",
+    "casino", "gambling", "lottery", "scam", "ponzi",
+    "гивэвей", "казино", "лотерея", "схема", "развод",
 ]
 
-# ✅ НОВОЕ: Слова для удаления из описания
 REMOVE_KEYWORDS = [
     "источник:", "джерело:", "source:", "via:", "read more:",
     "подробнее:", "читать далее:", "читать полностью:",
     "cryptoquant", "glassnode", "coindesk", "cointelegraph",
-    "forklog", "bits.media", "cryptonuz", "miningcrypto",
+    "forklog", "bits.media", "rbc", "coinspot",
 ]
 
 
@@ -51,17 +81,8 @@ def clean_html(text: str) -> str:
 
 
 def remove_source_mentions(text: str) -> str:
-    """
-    ✅ НОВОЕ: Удалите упоминания источников из текста
-
-    Примеры:
-    - "Источник: CryptoQuant" → ""
-    - "Source: Bloomberg" → ""
-    - "via CoinDesk" → ""
-    """
+    """Удалите упоминания источников из текста"""
     text_lower = text.lower()
-
-    # Найдите позицию первого упоминания источника
     min_position = len(text)
 
     for keyword in REMOVE_KEYWORDS:
@@ -69,32 +90,38 @@ def remove_source_mentions(text: str) -> str:
         if pos != -1 and pos < min_position:
             min_position = pos
 
-    # Обрежьте текст до первого упоминания источника
     if min_position < len(text):
         text = text[:min_position].strip()
 
-    # Удалите финальные точки/запятые если остались
     text = text.rstrip('.,;: ')
-
     return text
 
 
 class RSSParser:
-    def __init__(self, use_russian: bool = True):
-        self.feeds = RSS_FEEDS if use_russian else ENGLISH_FEEDS
-        self.use_russian = use_russian
+    def __init__(self, use_russian: bool = True, include_tier1: bool = True):
+        """
+        use_russian: русскоязычные источники
+        include_tier1: добавить премиум англоязычные
+        """
+        self.feeds = {}
+
+        if use_russian:
+            self.feeds.update(RSS_FEEDS)
+
+        if include_tier1:
+            self.feeds.update(TIER_1_FEEDS)
 
     @staticmethod
     def _is_relevant(title: str, description: str = "") -> bool:
         """Проверьте релевантность новости"""
         text = (title + " " + description).lower()
 
-        # Сначала blacklist
+        # Blacklist
         for keyword in BLACKLIST_KEYWORDS:
             if keyword in text:
                 return False
 
-        # Затем whitelist
+        # Whitelist
         for keyword in WHITELIST_KEYWORDS:
             if keyword in text:
                 return True
@@ -157,17 +184,23 @@ class RSSParser:
                     return img_urls[0]
 
         except Exception as e:
-            print(f"⚠️ Ошибка извлечения изображения: {e}")
+            pass
 
         return None
 
     async def fetch_feed(self, feed_url: str) -> List[dict]:
         """Парсьте RSS ленту с улучшенной обработкой ошибок"""
         try:
+            # ✅ ДОБАВЛЕН User-Agent (некоторые сайты блокируют без него)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+            }
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                         feed_url,
-                        timeout=aiohttp.ClientTimeout(total=20)  # ✅ Увеличен до 20 секунд
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=20)
                 ) as resp:
                     if resp.status == 200:
                         content = await resp.text()
@@ -175,12 +208,13 @@ class RSSParser:
                         return feed.entries[:20]
                     else:
                         print(f"⚠️ HTTP {resp.status}: {feed_url}")
+
         except asyncio.TimeoutError:
             print(f"⏱️ Timeout (20s): {feed_url}")
-        except aiohttp.ClientConnectorError as e:
+        except aiohttp.ClientConnectorError:
             print(f"🔌 Connection error: {feed_url}")
         except Exception as e:
-            print(f"❌ Unexpected error: {feed_url}: {e}")
+            print(f"❌ Error: {feed_url}: {e}")
 
         return []
 
@@ -204,29 +238,22 @@ class RSSParser:
                 published = entry.get("published", "")
                 summary = entry.get("summary", "")
 
-                # Очистите HTML
                 summary = clean_html(summary)
-
-                # ✅ НОВОЕ: Удалите упоминания источников
                 summary = remove_source_mentions(summary)
 
                 # Проверка релевантности
                 if not self._is_relevant(title, summary):
                     continue
 
-                # Определите язык
                 lang = self._detect_language(title + " " + summary)
-
-                # Извлеките изображение
                 image_url = self._extract_image_from_entry(entry)
 
-                # ✅ ИСПРАВЛЕНО: Полный summary без обрезания
                 all_news.append({
                     "title": title,
                     "link": link,
                     "source": source_name,
                     "published": published,
-                    "summary": summary,  # Полный текст
+                    "summary": summary,
                     "language": lang,
                     "image_url": image_url,
                     "raw_entry": entry,

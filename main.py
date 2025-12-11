@@ -19,6 +19,8 @@ from services.message_builder import (
 from services.ai_summary import NewsAnalyzer
 # Импортируем наш RateLimiter (он у вас уже есть в файлах)
 from services.rate_limiter import RateLimiter
+from aiogram import Router, F
+from aiogram.filters import Command
 
 from services.telegram_listener import listener
 
@@ -46,6 +48,35 @@ POSTING_INTERVAL_MINUTES = 5
 
 # Инициализируем лимитер (300 секунд = 5 минут)
 rate_limiter = RateLimiter(min_interval_seconds=POSTING_INTERVAL_MINUTES * 60)
+
+router = Router()
+
+
+@router.message(Command("stats"))
+async def cmd_stats(message):
+    """Статистика бота"""
+    total = await db.execute("SELECT COUNT(*) FROM news")
+    posted = await db.execute("SELECT COUNT(*) FROM news WHERE posted_to_telegram=1")
+
+    await message.answer(
+        f"📊 Статистика:\n"
+        f"Всего новостей: {total}\n"
+        f"Опубликовано: {posted}\n"
+        f"В очереди: {total - posted}"
+    )
+
+
+@router.message(Command("sources"))
+async def cmd_sources(message):
+    """Список источников"""
+    sources = await db.execute(
+        "SELECT source, COUNT(*) as cnt FROM news GROUP BY source ORDER BY cnt DESC"
+    )
+    text = "📡 Источники:\n\n"
+    for source, count in sources:
+        text += f"{source}: {count}\n"
+
+    await message.answer(text)
 
 
 async def scheduled_parsing():
