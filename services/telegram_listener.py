@@ -14,16 +14,16 @@ class TelegramListener:
     def __init__(self):
         self.client = None
         self.ai = NewsAnalyzer()
+        # Очищаем список каналов от пробелов и пустых строк
         self.source_channels = [ch.strip() for ch in SOURCE_CHANNELS if ch.strip()]
         self.is_running = False
 
     async def start(self):
         """Запуск прослушки с обработкой ошибок"""
 
-        # Проверка конфигурации
+        # 1. Проверка конфигурации
         if not TG_API_ID or TG_API_ID == 0:
             logger.warning("⚠️ TG_API_ID не установлен. Userbot отключен.")
-            logger.info("💡 Получите API ID: https://my.telegram.org/apps")
             return
 
         if not TG_API_HASH:
@@ -35,7 +35,7 @@ class TelegramListener:
             return
 
         try:
-            # Создаем клиент
+            # 2. Создаем клиент (Session name: anon_session)
             self.client = TelegramClient(
                 'anon_session',
                 TG_API_ID,
@@ -44,174 +44,141 @@ class TelegramListener:
             )
 
             logger.info(f"🎧 Запуск Userbot...")
-            logger.info(f"📡 Источники для прослушки: {self.source_channels}")
+            logger.info(f"📡 Источники: {self.source_channels}")
 
-            # Подключение
+            # 3. Подключение
             await self.client.start()
 
-            # Проверка авторизации
+            # 4. Проверка авторизации
             if not await self.client.is_user_authorized():
-                logger.error("❌ Userbot не авторизован!")
+                logger.error("❌ Userbot не авторизован! Запустите бота локально и введите код.")
                 return
 
             me = await self.client.get_me()
-            logger.info(f"✅ Userbot: @{me.username or me.first_name}")
+            logger.info(f"✅ Userbot активен: @{me.username or me.first_name}")
 
-            # ✅ УЛУЧШЕННАЯ ПРОВЕРКА ДОСТУПА
+            # 5. Разрешение имен каналов (превращаем username в entity)
             accessible_entities = []
-
             for source_id in self.source_channels:
                 try:
+                    # Пытаемся получить объект канала/пользователя
                     entity = await self.client.get_entity(source_id)
-
-                    # Определяем тип entity
-                    if isinstance(entity, Channel):
-                        name = entity.title
-                        entity_type = "Канал"
-                    elif isinstance(entity, User):
-                        name = entity.first_name or entity.username
-                        entity_type = "Пользователь"
-                    else:
-                        name = str(entity.id)
-                        entity_type = "Неизвестно"
-
                     accessible_entities.append(entity)
-                    logger.info(f"✅ {entity_type}: {name} (@{source_id})")
 
-                except ValueError as e:
-                    logger.error(f"❌ Неверный username: @{source_id}")
-                    logger.info(f"💡 Проверьте username в SOURCE_CHANNELS")
+                    name = getattr(entity, 'title', getattr(entity, 'first_name', 'Unknown'))
+                    logger.info(f"✅ Подключено: {name} (@{source_id})")
+
                 except Exception as e:
-                    logger.warning(f"⚠️ Ошибка доступа @{source_id}: {e}")
+                    logger.warning(f"⚠️ Не удалось подключиться к @{source_id}: {e}")
 
             if not accessible_entities:
-                logger.error("❌ Нет доступных источников!")
-                logger.info("💡 Правильные форматы:")
-                logger.info("  - Публичный канал: walterbloomberg")
-                logger.info("  - Приватный канал: -1001234567890")
-                logger.info("  - Пользователь: elonmusk")
+                logger.error("❌ Нет доступных источников для прослушки.")
                 return
 
-            # Регистрируем обработчик
+            # 6. Регистрируем обработчик событий (Новые сообщения)
             @self.client.on(events.NewMessage(chats=accessible_entities))
             async def handler(event):
                 await self.handle_new_message(event)
 
             self.is_running = True
-            logger.info(f"🟢 Userbot активен. Слушаю {len(accessible_entities)} источников...")
+            logger.info(f"🟢 Слушаю {len(accessible_entities)} каналов...")
 
         except SessionPasswordNeededError:
-            logger.error("❌ Требуется 2FA пароль!")
+            logger.error("❌ Ошибка входа: Требуется 2FA пароль!")
         except PhoneNumberInvalidError:
-            logger.error("❌ Неверный номер телефона!")
+            logger.error("❌ Ошибка входа: Неверный номер телефона/хеш!")
         except Exception as e:
-            logger.error(f"❌ Ошибка запуска: {e}", exc_info=True)
+            logger.error(f"❌ Критическая ошибка Userbot: {e}", exc_info=True)
 
     async def handle_new_message(self, event):
-        """Обработка входящего сообщения"""
+        """Обработка входящего сообщения (Фильтрация -> ИИ -> БД)"""
         try:
             raw_text = event.message.text
-            if not raw_text: return
+            if not raw_text:
+                return
 
-            # Определение источника (упрощенно)
-            chat_id = event.chat_id
-            # Можно получить username, если он доступен
+            # --- СБОР ИНФОРМАЦИИ ОБ ИСТОЧНИКЕ ---
             chat = await event.get_chat()
-            username = chat.username.lower() if chat.username else ""
 
-            # === 🛡️ ПРЕ-ФИЛЬТР (Экономим ИИ) ===
+            # Получаем название для логов
+            source_title = getattr(chat, 'title', getattr(chat, 'first_name', 'Unknown'))
 
-            # 1. Фильтр для Whale Alert (Игнорируем мелочь и USDT-USDC свопы)
+            # Получаем username для фильтров (в нижнем регистре)
+            username = getattr(chat, 'username', '') or ""
+            username = username.lower()
+
+            # === 🛡️ ПРЕ-ФИЛЬТР (Экономим ресурсы ИИ) ===
+
+            # 1. Фильтр для Whale Alert (игнорируем мелкие транзакции)
             if "whale" in username:
-                if "USD" in raw_text and "transferred" in raw_text:
-                    # Если сумма меньше 50M - игнор (примерная логика, лучше regex)
-                    # Простой способ: если нет слова "million" или число маленькое
-                    if "50,000,000" not in raw_text and "100,000,000" not in raw_text:
-                         # Это грубый пример, лучше настроить точнее
-                         return
-                if "Minted" in raw_text: # Печать тезера - это важно, оставляем
-                    pass
-                else:
-                    return # Остальное пропускаем
+                # Если в тексте нет миллионов (крупных сумм) и это не 'Minted' (печать)
+                # Логика: если это обычный перевод (transferred) и сумма маленькая
+                if "transferred" in raw_text and "USD" in raw_text:
+                    # Простой эвристический фильтр: ищем большие числа или слова markers
+                    if "1,000,000,000" not in raw_text and "500,000,000" not in raw_text and "Minted" not in raw_text:
+                        # Если это не миллиардный перевод и не минтинг - пропускаем
+                        # (Можно настроить точнее под ваши нужды)
+                        return
 
-            # 2. Фильтр стоп-слов (Реклама)
-            STOP_WORDS = ["giveaway", "promo", "discount", "join vip", "sign up"]
+                        # 2. Фильтр стоп-слов (Реклама, спам)
+            STOP_WORDS = ["giveaway", "promo", "discount", "join vip", "sign up", "limited offer"]
             if any(w in raw_text.lower() for w in STOP_WORDS):
-                logger.info(f"🗑️ Сработал стоп-слов фильтр")
                 return
 
-            # 3. Фильтр длины (слишком короткие "Hi", "GM")
-            if len(raw_text) < 15:
+            # 3. Фильтр длины (слишком короткие сообщения неинформативны)
+            if len(raw_text) < 20:
                 return
 
-        # === КОНЕЦ ПРЕ-ФИЛЬТРА ===
+            # === КОНЕЦ ПРЕ-ФИЛЬТРА ===
 
-        source_name = chat.title or "Unknown"
-        logger.info(f"⚡️ Поймано из {source_name}: {raw_text[:30]}...")
-        try:
-            raw_text = event.message.text
+            logger.info(f"⚡️ Поймано из {source_title}: {raw_text[:40]}...")
 
-            # Базовая фильтрация
-            if not raw_text or len(raw_text) < 20:
-                return
-
-            # ✅ УЛУЧШЕНО: Получение имени источника
-            if hasattr(event.chat, 'title'):
-                source_name = event.chat.title
-            elif hasattr(event.chat, 'first_name'):
-                source_name = event.chat.first_name
-            elif hasattr(event.chat, 'username'):
-                source_name = f"@{event.chat.username}"
-            else:
-                source_name = "Unknown"
-
-            logger.info(f"⚡️ Сообщение из {source_name}")
-
-            # Уникальный ID
+            # --- ПРОВЕРКА НА ДУБЛИКАТЫ (По ID сообщения) ---
+            # Формируем уникальный ID: tg_IDКанала_IDСообщения
             msg_unique_id = f"tg_{event.chat_id}_{event.message.id}"
 
-            # Проверка дубликатов
             if await db.news_exists(msg_unique_id):
                 return
 
-            # ИИ обработка
+            # --- ОБРАБОТКА ЧЕРЕЗ ИИ (Gemini) ---
+            # Отправляем текст в Gemini, чтобы он решил: "High Importance" или нет
             processed = await self.ai.process_incoming_news(raw_text)
 
-            if not processed:
-                logger.debug(f"Фильтр: {raw_text[:30]}...")
-                return
+            if processed:
+                title = processed['ru_title']
 
-            title = processed['ru_title']
+                # --- УМНАЯ ДЕДУПЛИКАЦИЯ (Fuzzy Matching) ---
+                # Если такая же новость уже была (даже с другим ID), пропускаем
+                if await db.is_duplicate_by_content(title, threshold=85):
+                    logger.info(f"♻️ Пропуск смыслового дубликата: {title}")
+                    return
 
-            # Fuzzy дедупликация
-            if await db.is_duplicate_by_content(title, threshold=85):
-                logger.info(f"♻️ Дубликат: {title[:40]}...")
-                return
+                logger.info(f"💎 ВАЖНЫЙ ИНСАЙД: {title}")
 
-            logger.info(f"💎 ИНСАЙД: {title}")
-
-            # Сохранение
-            await db.add_news(
-                url=msg_unique_id,
-                title=title,
-                summary=processed['ru_summary'],
-                source=f"⚡ Insider ({source_name})",
-                published_at="Just now",
-                image_url=None,
-                priority=1  # МОЛНИЯ
-            )
-
-            logger.info("✅ Добавлен в очередь (HIGH PRIORITY)")
+                # --- СОХРАНЕНИЕ В БД (С ВЫСОКИМ ПРИОРИТЕТОМ) ---
+                await db.add_news(
+                    url=msg_unique_id,
+                    title=title,
+                    summary=processed['ru_summary'],
+                    source=f"⚡ Insider ({source_title})",
+                    published_at="Just now",
+                    image_url=None,  # У текстовых молний обычно нет картинки
+                    priority=1  # 🚨 ВАЖНО: Приоритет 1 заставит main.py отправить это МГНОВЕННО
+                )
+            else:
+                # Если ИИ вернул None (решил, что новость Low importance)
+                logger.debug("🗑️ ИИ отфильтровал новость как неважную")
 
         except Exception as e:
-            logger.error(f"❌ Ошибка обработки: {e}", exc_info=True)
+            logger.error(f"❌ Ошибка в обработчике сообщений: {e}")
 
     async def stop(self):
-        """Остановка"""
+        """Корректная остановка"""
         if self.client and self.is_running:
             await self.client.disconnect()
             self.is_running = False
             logger.info("🛑 Userbot остановлен")
 
 
+# Создаем глобальный экземпляр класса
 listener = TelegramListener()
