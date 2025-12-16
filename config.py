@@ -10,6 +10,7 @@ TELEGRAM_CHANNEL_ID = int(os.getenv("TELEGRAM_CHANNEL_ID"))
 
 # OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Настройки парсинга
 PARSE_INTERVAL = int(os.getenv("PARSE_INTERVAL", 300))  # 5 минут по умолчанию
@@ -27,3 +28,4 @@ TG_API_HASH = os.getenv("TG_API_HASH")
 # Получаем список каналов, убираем пробелы
 _channels_str = os.getenv("SOURCE_CHANNELS", "")
 SOURCE_CHANNELS = [ch.strip() for ch in _channels_str.split(",") if ch.strip()]
+
