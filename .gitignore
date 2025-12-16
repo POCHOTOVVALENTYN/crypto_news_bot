@@ -6,3 +6,6 @@ venv/
 .idea/
 __pycache__/
 *.pyc
+*.session
+anon_session.session
+

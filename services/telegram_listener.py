@@ -23,11 +23,6 @@ class TelegramListener:
     def _load_or_migrate_session(self) -> StringSession:
         """
         Загружает StringSession из переменной окружения или мигрирует файл сессии.
-
-        Приоритет:
-        1. TG_SESSION_STRING (переменная окружения)
-        2. anon_session.session (файл - мигрируется в строку)
-        3. Пустая сессия (требует авторизации)
         """
 
         # 1. Проверяем переменную окружения
@@ -42,15 +37,23 @@ class TelegramListener:
             logger.warning("🔄 Мигрирую в StringSession...")
 
             # Создаем временный клиент для извлечения строки
+            # ВАЖНО: Используем синхронные методы напрямую
+            import telethon.sync
+
             temp_client = TelegramClient(
                 "anon_session",
                 config.tg_api_id,
                 config.tg_api_hash
             )
 
-            # Синхронный контекст для получения строки
-            with temp_client:
-                session_str = temp_client.session.save()
+            temp_client.connect()
+            if not temp_client.is_user_authorized():
+                logger.error("❌ Сессия не авторизована!")
+                temp_client.disconnect()
+                return StringSession()
+
+            session_str = temp_client.session.save()
+            temp_client.disconnect()
 
             # Выводим строку для добавления в .env
             logger.info("=" * 60)

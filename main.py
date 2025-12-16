@@ -53,6 +53,12 @@ rate_limiter = RateLimiter(min_interval_seconds=300)
 alert_manager.bot = bot
 alert_manager.admin_id = config.admin_id
 
+# ДОБАВЬТЕ ПРОВЕРКУ:
+if not config.admin_id:
+    logger.warning("⚠️ ADMIN_ID не установлен - алерты будут только в логах!")
+else:
+    logger.info(f"✅ AlertManager настроен (Admin ID: {config.admin_id})")
+
 
 # === КОМАНДЫ БОТА ===
 @router.message(Command("stats"))

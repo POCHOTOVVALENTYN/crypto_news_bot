@@ -1,8 +1,7 @@
-# config.py
-import logging
 from typing import Optional, List
 from pydantic import Field, field_validator, ValidationError
 from pydantic_settings import BaseSettings
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +94,7 @@ def load_settings() -> Settings:
     Загружает и валидирует настройки.
     Если критические параметры отсутствуют - бот упадет здесь с понятной ошибкой.
     """
+    logger = logging.getLogger(__name__)
     try:
         settings = Settings()
 

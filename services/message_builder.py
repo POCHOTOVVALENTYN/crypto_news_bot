@@ -11,22 +11,22 @@ logger = logging.getLogger(__name__)
 
 # === ASYNC LRU CACHE (Простая реализация) ===
 def async_lru_cache(maxsize=128, ttl=300):
-    """
-    Декоратор для кэширования асинхронных функций с TTL.
-
-    Args:
-        maxsize: Максимальный размер кэша
-        ttl: Time-to-live в секундах
-    """
+    """Декоратор для кэширования асинхронных функций с TTL."""
 
     def decorator(func):
         cache = {}
         cache_times = {}
-        lock = asyncio.Lock()
+        _lock = None  # Ленивая инициализация
+
+        def get_lock():
+            nonlocal _lock
+            if _lock is None:
+                _lock = asyncio.Lock()
+            return _lock
 
         async def wrapper(*args, **kwargs):
-            # Создаем ключ кэша
             key = str(args) + str(sorted(kwargs.items()))
+            lock = get_lock()  # Получаем lock при первом вызове
 
             async with lock:
                 # Проверяем наличие и актуальность
@@ -36,7 +36,6 @@ def async_lru_cache(maxsize=128, ttl=300):
                         logger.debug(f"✅ Cache HIT: {func.__name__}")
                         return cache[key]
                     else:
-                        # Устаревший кэш
                         del cache[key]
                         del cache_times[key]
 
@@ -44,12 +43,12 @@ def async_lru_cache(maxsize=128, ttl=300):
             logger.debug(f"❌ Cache MISS: {func.__name__}")
             result = await func(*args, **kwargs)
 
+            lock = get_lock()
             async with lock:
-                # Сохраняем в кэш
                 cache[key] = result
                 cache_times[key] = asyncio.get_event_loop().time()
 
-                # Ограничиваем размер кэша (простейший LRU)
+                # Ограничиваем размер кэша
                 if len(cache) > maxsize:
                     oldest_key = min(cache_times, key=cache_times.get)
                     del cache[oldest_key]
@@ -57,7 +56,6 @@ def async_lru_cache(maxsize=128, ttl=300):
 
             return result
 
-        # Добавляем метод очистки кэша
         wrapper.cache_clear = lambda: cache.clear() or cache_times.clear()
         return wrapper
 
