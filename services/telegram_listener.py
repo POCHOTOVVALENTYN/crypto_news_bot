@@ -1,9 +1,11 @@
 # services/telegram_listener.py
 import logging
+import os
+from pathlib import Path
 from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError, PhoneNumberInvalidError
-from telethon.tl.types import User, Channel
-from config import TG_API_ID, TG_API_HASH, SOURCE_CHANNELS
+from telethon.sessions import StringSession
+from config import config
 from database import db
 from services.ai_summary import NewsAnalyzer
 
@@ -14,19 +16,64 @@ class TelegramListener:
     def __init__(self):
         self.client = None
         self.ai = NewsAnalyzer()
-        # Очищаем список каналов от пробелов и пустых строк
-        self.source_channels = [ch.strip() for ch in SOURCE_CHANNELS if ch.strip()]
+        self.source_channels = config.source_channels
         self.is_running = False
+        self.session_string = None
+
+    def _load_or_migrate_session(self) -> StringSession:
+        """
+        Загружает StringSession из переменной окружения или мигрирует файл сессии.
+
+        Приоритет:
+        1. TG_SESSION_STRING (переменная окружения)
+        2. anon_session.session (файл - мигрируется в строку)
+        3. Пустая сессия (требует авторизации)
+        """
+
+        # 1. Проверяем переменную окружения
+        if config.tg_session_string:
+            logger.info("✅ Использую StringSession из TG_SESSION_STRING")
+            return StringSession(config.tg_session_string)
+
+        # 2. Проверяем файл сессии (legacy)
+        session_file = Path("anon_session.session")
+        if session_file.exists():
+            logger.warning("⚠️ ОБНАРУЖЕН ФАЙЛ СЕССИИ (небезопасно!)")
+            logger.warning("🔄 Мигрирую в StringSession...")
+
+            # Создаем временный клиент для извлечения строки
+            temp_client = TelegramClient(
+                "anon_session",
+                config.tg_api_id,
+                config.tg_api_hash
+            )
+
+            # Синхронный контекст для получения строки
+            with temp_client:
+                session_str = temp_client.session.save()
+
+            # Выводим строку для добавления в .env
+            logger.info("=" * 60)
+            logger.info("📋 СКОПИРУЙТЕ ЭТУ СТРОКУ В .env:")
+            logger.info(f"TG_SESSION_STRING={session_str}")
+            logger.info("=" * 60)
+            logger.warning(f"⚠️ После добавления в .env удалите файл: rm {session_file}")
+
+            return StringSession(session_str)
+
+        # 3. Пустая сессия (первый запуск)
+        logger.info("🆕 Создаю новую сессию (потребуется авторизация)")
+        return StringSession()
 
     async def start(self):
         """Запуск прослушки с обработкой ошибок"""
 
         # 1. Проверка конфигурации
-        if not TG_API_ID or TG_API_ID == 0:
+        if config.tg_api_id == 0:
             logger.warning("⚠️ TG_API_ID не установлен. Userbot отключен.")
             return
 
-        if not TG_API_HASH:
+        if not config.tg_api_hash:
             logger.warning("⚠️ TG_API_HASH не установлен. Userbot отключен.")
             return
 
@@ -35,33 +82,45 @@ class TelegramListener:
             return
 
         try:
-            # 2. Создаем клиент (Session name: anon_session)
+            # 2. Загружаем или мигрируем сессию
+            session = self._load_or_migrate_session()
+
+            # 3. Создаем клиент
             self.client = TelegramClient(
-                'anon_session',
-                TG_API_ID,
-                TG_API_HASH,
+                session,
+                config.tg_api_id,
+                config.tg_api_hash,
                 system_version="4.16.30-vxCUSTOM"
             )
 
-            logger.info(f"🎧 Запуск Userbot...")
+            logger.info("🎧 Запуск Userbot...")
             logger.info(f"📡 Источники: {self.source_channels}")
 
-            # 3. Подключение
+            # 4. Подключение
             await self.client.start()
 
-            # 4. Проверка авторизации
+            # 5. Проверка авторизации
             if not await self.client.is_user_authorized():
-                logger.error("❌ Userbot не авторизован! Запустите бота локально и введите код.")
+                logger.error("❌ Userbot не авторизован!")
+                logger.error("💡 Запустите бота локально для ввода кода подтверждения.")
+                logger.error("💡 После авторизации строка сессии будет выведена в лог.")
                 return
 
             me = await self.client.get_me()
             logger.info(f"✅ Userbot активен: @{me.username or me.first_name}")
 
-            # 5. Разрешение имен каналов (превращаем username в entity)
+            # 6. Сохраняем StringSession для вывода (если новая)
+            if not config.tg_session_string:
+                self.session_string = self.client.session.save()
+                logger.info("=" * 60)
+                logger.info("📋 НОВАЯ СЕССИЯ - ДОБАВЬТЕ В .env:")
+                logger.info(f"TG_SESSION_STRING={self.session_string}")
+                logger.info("=" * 60)
+
+            # 7. Разрешение имен каналов
             accessible_entities = []
             for source_id in self.source_channels:
                 try:
-                    # Пытаемся получить объект канала/пользователя
                     entity = await self.client.get_entity(source_id)
                     accessible_entities.append(entity)
 
@@ -75,7 +134,7 @@ class TelegramListener:
                 logger.error("❌ Нет доступных источников для прослушки.")
                 return
 
-            # 6. Регистрируем обработчик событий (Новые сообщения)
+            # 8. Регистрируем обработчик событий
             @self.client.on(events.NewMessage(chats=accessible_entities))
             async def handler(event):
                 await self.handle_new_message(event)
@@ -84,9 +143,9 @@ class TelegramListener:
             logger.info(f"🟢 Слушаю {len(accessible_entities)} каналов...")
 
         except SessionPasswordNeededError:
-            logger.error("❌ Ошибка входа: Требуется 2FA пароль!")
+            logger.error("❌ Требуется 2FA пароль! Установите пароль вручную.")
         except PhoneNumberInvalidError:
-            logger.error("❌ Ошибка входа: Неверный номер телефона/хеш!")
+            logger.error("❌ Неверный номер телефона или API credentials.")
         except Exception as e:
             logger.error(f"❌ Критическая ошибка Userbot: {e}", exc_info=True)
 
@@ -97,80 +156,63 @@ class TelegramListener:
             if not raw_text:
                 return
 
-            # --- СБОР ИНФОРМАЦИИ ОБ ИСТОЧНИКЕ ---
+            # Получаем информацию об источнике
             chat = await event.get_chat()
-
-            # Получаем название для логов
             source_title = getattr(chat, 'title', getattr(chat, 'first_name', 'Unknown'))
+            username = (getattr(chat, 'username', '') or "").lower()
 
-            # Получаем username для фильтров (в нижнем регистре)
-            username = getattr(chat, 'username', '') or ""
-            username = username.lower()
+            # === ПРЕ-ФИЛЬТР ===
 
-            # === 🛡️ ПРЕ-ФИЛЬТР (Экономим ресурсы ИИ) ===
-
-            # 1. Фильтр для Whale Alert (игнорируем мелкие транзакции)
+            # 1. Whale Alert (крупные транзакции)
             if "whale" in username:
-                # Если в тексте нет миллионов (крупных сумм) и это не 'Minted' (печать)
-                # Логика: если это обычный перевод (transferred) и сумма маленькая
                 if "transferred" in raw_text and "USD" in raw_text:
-                    # Простой эвристический фильтр: ищем большие числа или слова markers
-                    if "1,000,000,000" not in raw_text and "500,000,000" not in raw_text and "Minted" not in raw_text:
-                        # Если это не миллиардный перевод и не минтинг - пропускаем
-                        # (Можно настроить точнее под ваши нужды)
+                    if not any(x in raw_text for x in ["1,000,000,000", "500,000,000", "Minted"]):
                         return
 
-                        # 2. Фильтр стоп-слов (Реклама, спам)
+            # 2. Стоп-слова
             STOP_WORDS = ["giveaway", "promo", "discount", "join vip", "sign up", "limited offer"]
             if any(w in raw_text.lower() for w in STOP_WORDS):
                 return
 
-            # 3. Фильтр длины (слишком короткие сообщения неинформативны)
+            # 3. Минимальная длина
             if len(raw_text) < 20:
                 return
 
-            # === КОНЕЦ ПРЕ-ФИЛЬТРА ===
-
             logger.info(f"⚡️ Поймано из {source_title}: {raw_text[:40]}...")
 
-            # --- ПРОВЕРКА НА ДУБЛИКАТЫ (По ID сообщения) ---
-            # Формируем уникальный ID: tg_IDКанала_IDСообщения
+            # Проверка дубликатов по ID
             msg_unique_id = f"tg_{event.chat_id}_{event.message.id}"
-
             if await db.news_exists(msg_unique_id):
                 return
 
-            # --- ОБРАБОТКА ЧЕРЕЗ ИИ (Gemini) ---
-            # Отправляем текст в Gemini, чтобы он решил: "High Importance" или нет
+            # Обработка через ИИ
             processed = await self.ai.process_incoming_news(raw_text)
 
             if processed:
                 title = processed['ru_title']
 
-                # --- УМНАЯ ДЕДУПЛИКАЦИЯ (Fuzzy Matching) ---
-                # Если такая же новость уже была (даже с другим ID), пропускаем
+                # Fuzzy дедупликация
                 if await db.is_duplicate_by_content(title, threshold=85):
-                    logger.info(f"♻️ Пропуск смыслового дубликата: {title}")
+                    logger.info(f"♻️ Пропуск дубликата: {title}")
                     return
 
                 logger.info(f"💎 ВАЖНЫЙ ИНСАЙД: {title}")
 
-                # --- СОХРАНЕНИЕ В БД (С ВЫСОКИМ ПРИОРИТЕТОМ) ---
+                # Сохранение с высоким приоритетом
                 await db.add_news(
                     url=msg_unique_id,
                     title=title,
                     summary=processed['ru_summary'],
                     source=f"⚡ Insider ({source_title})",
                     published_at="Just now",
-                    image_url=None,  # У текстовых молний обычно нет картинки
-                    priority=1  # 🚨 ВАЖНО: Приоритет 1 заставит main.py отправить это МГНОВЕННО
+                    image_url=None,
+                    priority=1  # Молния!
                 )
             else:
-                # Если ИИ вернул None (решил, что новость Low importance)
-                logger.debug("🗑️ ИИ отфильтровал новость как неважную")
+                logger.debug("🗑️ ИИ отфильтровал как неважное")
 
         except Exception as e:
-            logger.error(f"❌ Ошибка в обработчике сообщений: {e}")
+            logger.error(f"❌ Ошибка обработчика сообщений: {e}", exc_info=True)
 
     async def stop(self):
         """Корректная остановка"""
@@ -180,5 +222,5 @@ class TelegramListener:
             logger.info("🛑 Userbot остановлен")
 
 
-# Создаем глобальный экземпляр класса
+# Глобальный экземпляр
 listener = TelegramListener()
