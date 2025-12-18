@@ -1,9 +1,8 @@
-from typing import Optional, List
+# config.py
+from typing import Optional, List, Union
 from pydantic import Field, field_validator, ValidationError
 from pydantic_settings import BaseSettings
 import logging
-
-logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -27,7 +26,9 @@ class Settings(BaseSettings):
     tg_api_id: int = Field(0, description="Telegram API ID from my.telegram.org")
     tg_api_hash: Optional[str] = Field(None, description="Telegram API Hash")
     tg_session_string: Optional[str] = Field(None, description="Telethon StringSession (base64)")
-    source_channels: List[str] = Field(default_factory=list, description="Telegram channels to monitor")
+
+    # ⚠️ ИСПРАВЛЕНО: str вместо List[str]
+    source_channels: str = Field("", description="Telegram channels to monitor (comma-separated)")
 
     # === PARSING SETTINGS ===
     parse_interval: int = Field(300, ge=60, le=3600, description="RSS parsing interval (seconds)")
@@ -46,30 +47,13 @@ class Settings(BaseSettings):
 
     @field_validator("source_channels", mode="before")
     @classmethod
-    def parse_source_channels(cls, v) -> List[str]:
-        """Парсит SOURCE_CHANNELS из строки через запятую"""
-        try:
-            # Если пришел None, возвращаем пустой список
-            if v is None:
-                return []
-
-            # Если это строка (самый частый случай из .env)
-            if isinstance(v, str):
-                # Удаляем скобки и кавычки, если пользователь случайно их добавил
-                clean_v = v.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
-                return [ch.strip() for ch in clean_v.split(",") if ch.strip()]
-
-            # Если это уже список (редко, но возможно)
-            elif isinstance(v, list):
-                return [str(ch).strip() for ch in v if str(ch).strip()]
-
-            # Если пришло что-то другое (число и т.д.)
-            return [str(v)]
-
-        except Exception as e:
-            # Логируем ошибку, но не роняем приложение, возвращая пустой список
-            logger.error(f"⚠️ Ошибка парсинга SOURCE_CHANNELS: {e}. Значение: {v}")
-            return []
+    def parse_source_channels(cls, v) -> str:
+        """Оставляет source_channels как строку (парсинг будет позже)"""
+        if v is None:
+            return ""
+        if isinstance(v, list):
+            return ",".join(str(ch).strip() for ch in v if ch)
+        return str(v).strip()
 
     @field_validator("log_level")
     @classmethod
@@ -89,20 +73,31 @@ class Settings(BaseSettings):
                 "Установите OPENAI_API_KEY или GEMINI_API_KEY в .env"
             )
 
+    def get_source_channels_list(self) -> List[str]:
+        """Возвращает source_channels как список"""
+        if not self.source_channels:
+            return []
+        return [ch.strip() for ch in self.source_channels.split(",") if ch.strip()]
+
     def validate_userbot_config(self) -> bool:
         """Проверяет конфигурацию Userbot (не критично, только предупреждение)"""
+        logger = logging.getLogger(__name__)
+
         if self.tg_api_id == 0 or not self.tg_api_hash:
             logger.warning("⚠️ Userbot не настроен (TG_API_ID/TG_API_HASH отсутствуют)")
             return False
-        if not self.source_channels:
+
+        channels_list = self.get_source_channels_list()
+        if not channels_list:
             logger.warning("⚠️ SOURCE_CHANNELS пуст, Userbot не будет слушать каналы")
             return False
+
         return True
 
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
-        case_sensitive = False  # Поддержка и верхнего, и нижнего регистра
+        case_sensitive = False
 
 
 # === ГЛОБАЛЬНЫЙ ЭКЗЕМПЛЯР ===
@@ -112,6 +107,7 @@ def load_settings() -> Settings:
     Если критические параметры отсутствуют - бот упадет здесь с понятной ошибкой.
     """
     logger = logging.getLogger(__name__)
+
     try:
         settings = Settings()
 
@@ -151,7 +147,7 @@ GEMINI_API_KEY = config.gemini_api_key
 TG_API_ID = config.tg_api_id
 TG_API_HASH = config.tg_api_hash
 TG_SESSION_STRING = config.tg_session_string
-SOURCE_CHANNELS = config.source_channels
+SOURCE_CHANNELS = config.get_source_channels_list()  # ⚠️ ИСПРАВЛЕНО
 PARSE_INTERVAL = config.parse_interval
 FILTER_ENABLED = config.filter_enabled
 LOG_LEVEL = config.log_level

@@ -16,7 +16,7 @@ class TelegramListener:
     def __init__(self):
         self.client = None
         self.ai = NewsAnalyzer()
-        self.source_channels = config.source_channels
+        self.source_channels = config.get_source_channels_list()
         self.is_running = False
         self.session_string = None
 
