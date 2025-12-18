@@ -48,11 +48,28 @@ class Settings(BaseSettings):
     @classmethod
     def parse_source_channels(cls, v) -> List[str]:
         """Парсит SOURCE_CHANNELS из строки через запятую"""
-        if isinstance(v, str):
-            return [ch.strip() for ch in v.split(",") if ch.strip()]
-        elif isinstance(v, list):
-            return [ch.strip() for ch in v if ch.strip()]
-        return []
+        try:
+            # Если пришел None, возвращаем пустой список
+            if v is None:
+                return []
+
+            # Если это строка (самый частый случай из .env)
+            if isinstance(v, str):
+                # Удаляем скобки и кавычки, если пользователь случайно их добавил
+                clean_v = v.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
+                return [ch.strip() for ch in clean_v.split(",") if ch.strip()]
+
+            # Если это уже список (редко, но возможно)
+            elif isinstance(v, list):
+                return [str(ch).strip() for ch in v if str(ch).strip()]
+
+            # Если пришло что-то другое (число и т.д.)
+            return [str(v)]
+
+        except Exception as e:
+            # Логируем ошибку, но не роняем приложение, возвращая пустой список
+            logger.error(f"⚠️ Ошибка парсинга SOURCE_CHANNELS: {e}. Значение: {v}")
+            return []
 
     @field_validator("log_level")
     @classmethod
