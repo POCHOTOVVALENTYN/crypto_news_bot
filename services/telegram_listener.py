@@ -1,6 +1,5 @@
-# services/telegram_listener.py
+# services/telegram_listener.py (ИСПРАВЛЕННАЯ ВЕРСИЯ)
 import logging
-import os
 from pathlib import Path
 from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError, PhoneNumberInvalidError
@@ -20,9 +19,10 @@ class TelegramListener:
         self.is_running = False
         self.session_string = None
 
-    def _load_or_migrate_session(self) -> StringSession:
+    async def _load_or_migrate_session(self) -> StringSession:
         """
         Загружает StringSession из переменной окружения или мигрирует файл сессии.
+        ✅ ИСПРАВЛЕНО: Используем async методы
         """
 
         # 1. Проверяем переменную окружения
@@ -36,33 +36,36 @@ class TelegramListener:
             logger.warning("⚠️ ОБНАРУЖЕН ФАЙЛ СЕССИИ (небезопасно!)")
             logger.warning("🔄 Мигрирую в StringSession...")
 
-            # Создаем временный клиент для извлечения строки
-            # ВАЖНО: Используем синхронные методы напрямую
-            import telethon.sync
-
+            # ✅ ИСПРАВЛЕНО: Используем async методы
             temp_client = TelegramClient(
                 "anon_session",
                 config.tg_api_id,
                 config.tg_api_hash
             )
 
-            temp_client.connect()
-            if not temp_client.is_user_authorized():
-                logger.error("❌ Сессия не авторизована!")
-                temp_client.disconnect()
+            try:
+                await temp_client.connect()  # ✅ await добавлен
+
+                if not await temp_client.is_user_authorized():  # ✅ await добавлен
+                    logger.error("❌ Сессия не авторизована!")
+                    await temp_client.disconnect()
+                    return StringSession()
+
+                session_str = temp_client.session.save()
+                await temp_client.disconnect()
+
+                # Выводим строку для добавления в .env
+                logger.info("=" * 60)
+                logger.info("📋 СКОПИРУЙТЕ ЭТУ СТРОКУ В .env:")
+                logger.info(f"TG_SESSION_STRING={session_str}")
+                logger.info("=" * 60)
+                logger.warning(f"⚠️ После добавления в .env удалите файл: rm {session_file}")
+
+                return StringSession(session_str)
+            except Exception as e:
+                logger.error(f"❌ Ошибка миграции сессии: {e}")
+                await temp_client.disconnect()
                 return StringSession()
-
-            session_str = temp_client.session.save()
-            temp_client.disconnect()
-
-            # Выводим строку для добавления в .env
-            logger.info("=" * 60)
-            logger.info("📋 СКОПИРУЙТЕ ЭТУ СТРОКУ В .env:")
-            logger.info(f"TG_SESSION_STRING={session_str}")
-            logger.info("=" * 60)
-            logger.warning(f"⚠️ После добавления в .env удалите файл: rm {session_file}")
-
-            return StringSession(session_str)
 
         # 3. Пустая сессия (первый запуск)
         logger.info("🆕 Создаю новую сессию (потребуется авторизация)")
@@ -86,7 +89,7 @@ class TelegramListener:
 
         try:
             # 2. Загружаем или мигрируем сессию
-            session = self._load_or_migrate_session()
+            session = await self._load_or_migrate_session()  # ✅ await добавлен
 
             # 3. Создаем клиент
             self.client = TelegramClient(
@@ -105,8 +108,9 @@ class TelegramListener:
             # 5. Проверка авторизации
             if not await self.client.is_user_authorized():
                 logger.error("❌ Userbot не авторизован!")
-                logger.error("💡 Запустите бота локально для ввода кода подтверждения.")
-                logger.error("💡 После авторизации строка сессии будет выведена в лог.")
+                logger.error("💡 Запустите интерактивную авторизацию:")
+                logger.error(
+                    "💡 python -c 'from services.telegram_listener import setup_userbot; import asyncio; asyncio.run(setup_userbot())'")
                 return
 
             me = await self.client.get_me()
@@ -149,6 +153,7 @@ class TelegramListener:
             logger.error("❌ Требуется 2FA пароль! Установите пароль вручную.")
         except PhoneNumberInvalidError:
             logger.error("❌ Неверный номер телефона или API credentials.")
+            logger.error("💡 Формат номера должен быть: +380635609097 (с кодом страны)")
         except Exception as e:
             logger.error(f"❌ Критическая ошибка Userbot: {e}", exc_info=True)
 
@@ -188,11 +193,16 @@ class TelegramListener:
             if await db.news_exists(msg_unique_id):
                 return
 
-            # Обработка через ИИ
+            # Обработка через ИИ (с проверкой доступности)
             processed = await self.ai.process_incoming_news(raw_text)
 
-            if processed:
-                title = processed['ru_title']
+            if processed and isinstance(processed, dict):
+                title = processed.get('ru_title')
+                summary = processed.get('ru_summary')
+
+                if not title or not summary:
+                    logger.warning(f"⚠️ AI вернул неполные данные. Ключи: {list(processed.keys())}")
+                    return
 
                 # Fuzzy дедупликация
                 if await db.is_duplicate_by_content(title, threshold=85):
@@ -205,14 +215,14 @@ class TelegramListener:
                 await db.add_news(
                     url=msg_unique_id,
                     title=title,
-                    summary=processed['ru_summary'],
+                    summary=summary,
                     source=f"⚡ Insider ({source_title})",
                     published_at="Just now",
                     image_url=None,
                     priority=1  # Молния!
                 )
             else:
-                logger.debug("🗑️ ИИ отфильтровал как неважное")
+                logger.debug("🗑️ ИИ отфильтровал как неважное или вернул невалидные данные")
 
         except Exception as e:
             logger.error(f"❌ Ошибка обработчика сообщений: {e}", exc_info=True)
@@ -227,3 +237,34 @@ class TelegramListener:
 
 # Глобальный экземпляр
 listener = TelegramListener()
+
+
+# ✅ НОВОЕ: Вспомогательная функция для первичной настройки
+async def setup_userbot():
+    """
+    Интерактивная настройка Userbot (запускается отдельно).
+
+    Usage:
+        python -c "from services.telegram_listener import setup_userbot; import asyncio; asyncio.run(setup_userbot())"
+    """
+    from config import config
+
+    if not config.tg_api_id or not config.tg_api_hash:
+        print("❌ TG_API_ID и TG_API_HASH должны быть установлены в .env")
+        return
+
+    client = TelegramClient(StringSession(), config.tg_api_id, config.tg_api_hash)
+
+    print("🔐 Запуск интерактивной авторизации...")
+    await client.start()
+
+    me = await client.get_me()
+    print(f"✅ Авторизован как: @{me.username or me.first_name}")
+
+    session_str = client.session.save()
+    print("\n" + "=" * 60)
+    print("📋 СКОПИРУЙТЕ ЭТУ СТРОКУ В .env:")
+    print(f"TG_SESSION_STRING={session_str}")
+    print("=" * 60)
+
+    await client.disconnect()

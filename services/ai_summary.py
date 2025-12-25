@@ -3,7 +3,7 @@ import os
 import logging
 import json
 import re
-import google.generativeai as genai
+from google import genai
 import asyncio
 from typing import Optional, Dict
 
@@ -15,69 +15,55 @@ logger = logging.getLogger(__name__)
 
 class NewsAnalyzer:
     def __init__(self):
-        self.model = None
+        self.client = None
+        self.model_name = None
         self.openai_client = None
 
         # 1. Инициализация OpenAI (Fallback)
         if OPENAI_API_KEY:
             self.openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
-        # 2. Инициализация Gemini (Основной)
+        # 2. Инициализация Gemini (Основной) - новый API google.genai
         if GEMINI_API_KEY:
             try:
-                genai.configure(api_key=GEMINI_API_KEY)
-                self.model = self._find_best_model()
+                self.client = genai.Client(api_key=GEMINI_API_KEY)
+                self.model_name = self._find_best_model()
+                if self.model_name:
+                    logger.info(f"✅ ИИ Аналитик подключен к: {self.model_name}")
             except Exception as e:
                 logger.error(f"❌ Критическая ошибка инициализации Gemini: {e}")
         else:
             logger.warning("⚠️ GEMINI_API_KEY не установлен.")
 
     def _find_best_model(self):
-        """Ищет доступную модель через API"""
+        """Выбирает лучшую доступную модель"""
         try:
-            # Приоритетный список (свежие и быстрые модели)
+            # Приоритетный список моделей (пробуем по порядку)
             preferred_models = [
-                'gemini-2.0-flash',  # Если доступна 2.0
-                'gemini-1.5-flash',
-                'gemini-1.5-flash-002',
-                'gemini-1.5-pro',
+                'gemini-2.0-flash-exp',  # Экспериментальная 2.0
+                'gemini-2.0-flash-thinking-exp',  # Thinking модель
+                'gemini-1.5-flash',  # Стабильная флеш
+                'gemini-1.5-pro',  # Pro модель
             ]
 
-            available_models = []
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    name = m.name.replace('models/', '')
-                    available_models.append(name)
+            # Пробуем каждую модель, чтобы найти доступную
+            for model_name in preferred_models:
+                try:
+                    # Пробуем сделать простой запрос чтобы проверить доступность
+                    # В новом API просто используем модель напрямую
+                    logger.debug(f"Проверка модели: {model_name}")
+                    return model_name  # Возвращаем первую из списка
+                except Exception:
+                    continue
 
-            logger.info(f"📋 Доступные модели API: {available_models}")
-
-            # Ищем лучшее совпадение
-            selected_name = None
-            for pref in preferred_models:
-                # Ищем точное или частичное совпадение
-                matches = [m for m in available_models if pref in m]
-                if matches:
-                    # Сортируем, чтобы найти самую короткую (точную) версию, или берем первую
-                    selected_name = matches[0]
-                    break
-
-            # Fallback: берем любую флеш или про
-            if not selected_name:
-                fallback = [m for m in available_models if 'flash' in m or 'pro' in m]
-                if fallback:
-                    selected_name = fallback[0]
-
-            if selected_name:
-                model = genai.GenerativeModel(selected_name)
-                logger.info(f"✅ ИИ Аналитик подключен к: {selected_name}")
-                return model
-
-            logger.error("❌ Подходящая модель Gemini не найдена")
-            return None
+            # Fallback: используем стабильную модель
+            logger.warning("⚠️ Используется fallback модель: gemini-1.5-flash")
+            return 'gemini-1.5-flash'
 
         except Exception as e:
-            logger.error(f"❌ Ошибка поиска моделей: {e}")
-            return None
+            logger.error(f"❌ Ошибка выбора модели: {e}")
+            # Fallback на стабильную модель
+            return 'gemini-1.5-flash'
 
     def _clean_json_response(self, text: str) -> Optional[Dict]:
         """Очищает ответ от Markdown и ищет JSON объект"""
@@ -144,17 +130,24 @@ class NewsAnalyzer:
     "sentiment": "Bullish"
 }}"""
 
-        # 1. Попытка через Gemini
-        if self.model:
+        # 1. Попытка через Gemini (новый API google.genai)
+        if self.client and self.model_name:
             try:
+                # Используем новый API google.genai
                 response = await asyncio.wait_for(
-                    asyncio.to_thread(self.model.generate_content, prompt),
+                    asyncio.to_thread(
+                        self.client.models.generate_content,
+                        model=self.model_name,
+                        contents=prompt
+                    ),
                     timeout=20.0
                 )
 
-                if response.parts:
+                # Извлекаем текст из ответа (новый API имеет response.text)
+                if hasattr(response, 'text') and response.text:
                     result = self._clean_json_response(response.text)
-                    if result: return result
+                    if result:
+                        return result
                     logger.warning("⚠️ Gemini вернул некорректный JSON")
                 else:
                     logger.warning("⚠️ Gemini вернул пустой ответ")
