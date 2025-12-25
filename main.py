@@ -60,6 +60,9 @@ else:
     logger.info(f"✅ AlertManager настроен (Admin ID: {config.admin_id})")
 
 
+
+
+
 # === КОМАНДЫ БОТА ===
 @router.message(Command("stats"))
 async def cmd_stats(message):
@@ -176,19 +179,27 @@ async def check_queue_and_post():
 
     # Подготовка данных
     ai_data = None
-    if "Insider" in news_item['source']:
-        ai_data = await ai_analyzer.analyze_text(
-            news_item['title'] + " " + news_item['summary']
-        )
-    else:
-        ai_result = await ai_analyzer.translate_and_analyze(
-            news_item['title'],
-            news_item['summary']
-        )
-        if ai_result:
-            news_item['title'] = ai_result.get('clean_title', news_item['title'])
-            news_item['summary'] = ai_result.get('clean_summary', news_item['summary'])
-            ai_data = ai_result
+    try:
+        if "Insider" in news_item['source']:
+            ai_data = await ai_analyzer.analyze_text(
+                news_item['title'] + " " + news_item['summary']
+            )
+            if not ai_data:
+                logger.warning(f"⚠️ AI анализ вернул None для Insider новости: {news_item['title'][:50]}")
+        else:
+            ai_result = await ai_analyzer.translate_and_analyze(
+                news_item['title'],
+                news_item['summary']
+            )
+            if ai_result:
+                news_item['title'] = ai_result.get('clean_title', news_item['title'])
+                news_item['summary'] = ai_result.get('clean_summary', news_item['summary'])
+                ai_data = ai_result
+            else:
+                logger.debug(f"ℹ️ AI перевод не выполнен для: {news_item['title'][:50]}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка AI обработки: {e}", exc_info=True)
+        # Продолжаем публикацию с оригинальными данными
 
     prices = await get_multiple_crypto_prices()
     fear_greed = await FearGreedIndexTracker.get_fear_greed_index()
@@ -207,8 +218,26 @@ async def check_queue_and_post():
     rich_msg = RichMediaMessage(msg_data['text'], msg_data['image_url'])
     if await rich_msg.send(bot, config.telegram_channel_id):
         await db.mark_as_posted(news_item['url'])
-        if not is_hot:
-            rate_limiter.mark_posted()
+        rate_limiter.mark_posted()  # Обновляем для всех постов
+        if is_hot:
+            logger.info("🔥 Молния опубликована вне очереди")
+
+
+# === БЕЗОПАСНЫЙ ЗАПУСК LISTENER ===
+async def safe_start_listener():
+    """Безопасный запуск listener с обработкой ошибок"""
+    try:
+        await listener.start()
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка запуска Userbot: {e}", exc_info=True)
+        if alert_manager.bot and alert_manager.admin_id:
+            try:
+                await alert_manager.send_alert(
+                    f"Не удалось запустить Userbot: {str(e)[:200]}",
+                    level="ERROR"
+                )
+            except Exception as alert_error:
+                logger.error(f"❌ Не удалось отправить алерт: {alert_error}")
 
 
 # === МОНИТОРИНГ ЗДОРОВЬЯ ===
@@ -255,7 +284,7 @@ async def main():
         # 2. Запуск Userbot
         if config.tg_api_id and config.tg_api_hash:
             logger.info("🎧 Запуск Telegram Userbot...")
-            asyncio.create_task(listener.start())
+            asyncio.create_task(safe_start_listener())
         else:
             logger.warning("⚠️ Userbot отключен (нет TG_API_ID/TG_API_HASH)")
 

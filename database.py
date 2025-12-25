@@ -82,6 +82,11 @@ class NewsDatabase:
                 await db.commit()
             return True
         except aiosqlite.IntegrityError:
+            # Дубликат - это нормально
+            return False
+        except Exception as e:
+            # Другие ошибки БД (подключение, блокировка и т.д.)
+            logger.error(f"❌ Ошибка добавления новости в БД: {e}", exc_info=True)
             return False
 
     async def get_hot_news(self):
