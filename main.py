@@ -25,6 +25,8 @@ from services.telegram_listener import listener
 
 # === НОВОЕ: Система обработки ошибок ===
 from utils.error_handling import safe_task, alert_manager, critical_error_handler
+from services.priority_calculator import PriorityCalculator
+from utils.news_validator import NewsValidator
 
 # Создаем папку для логов
 Path("logs").mkdir(exist_ok=True)
@@ -133,38 +135,88 @@ dp.include_router(router)
 # === ЗАДАЧИ ПЛАНИРОВЩИКА (С ЗАЩИТОЙ) ===
 @safe_task("RSS Parsing")
 async def scheduled_parsing():
-    """Сбор новостей (защищено декоратором)"""
+    """Сбор новостей с предварительным анализом и валидацией"""
     logger.info("🔍 Парсер: ищу свежие новости...")
     news_list = await rss_parser.get_all_news()
     count = 0
+    high_priority_count = 0
+    filtered_count = 0
 
     for news in news_list:
-        if not await db.news_exists(news['link']):
-            await db.add_news(
-                url=news['link'],
-                title=news['title'],
-                summary=news['summary'],
-                source=news['source'],
-                published_at=news['published'],
-                image_url=news['image_url']
-            )
+        # Валидация
+        is_valid, error = NewsValidator.validate_news_item(news)
+        if not is_valid:
+            logger.debug(f"❌ Новость не прошла валидацию: {error}")
+            filtered_count += 1
+            continue
+        
+        # Проверка актуальности
+        if not NewsValidator.is_news_relevant(news):
+            filtered_count += 1
+            continue
+        
+        # Проверка дубликатов
+        if await db.news_exists(news['link']):
+            continue
+        
+        # Предварительный расчет приоритета БЕЗ AI (быстро, без запросов к API)
+        priority_quick = PriorityCalculator.calculate_priority(news, None)
+        
+        # AI анализ ТОЛЬКО для потенциально важных новостей (приоритет >= 6 по ключевым словам)
+        # Это значительно снижает количество запросов к API
+        ai_analysis = None
+        if priority_quick >= 6:
+            try:
+                ai_analysis = await ai_analyzer.analyze_text(
+                    news['title'] + " " + news['summary']
+                )
+                if ai_analysis:
+                    logger.debug(f"✅ AI анализ выполнен для: {news['title'][:50]}")
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка предварительного AI анализа: {e}")
+        
+        # Финальный расчет приоритета (с учетом AI если был выполнен)
+        priority = PriorityCalculator.calculate_priority(news, ai_analysis)
+        
+        # Фильтруем низкоприоритетные новости
+        if priority < 2:
+            logger.debug(f"⏭️ Пропуск низкоприоритетной новости (priority={priority})")
+            filtered_count += 1
+            continue
+        
+        # Сохраняем
+        success = await db.add_news(
+            url=news['link'],
+            title=news['title'],
+            summary=news['summary'],
+            source=news['source'],
+            published_at=news['published'],
+            image_url=news['image_url'],
+            priority=priority
+        )
+        
+        if success:
             count += 1
+            if priority >= 6:
+                high_priority_count += 1
+                logger.info(f"🔥 Высокоприоритетная (priority={priority}): {news['title'][:50]}")
 
-    if count > 0:
-        logger.info(f"📥 Добавлено {count} новостей")
+    logger.info(f"📥 RSS: найдено {len(news_list)}, добавлено {count} ({high_priority_count} высокоприоритетных), "
+                f"отфильтровано {filtered_count}")
 
 
 @safe_task("Queue Poster")
 async def check_queue_and_post():
     """Проверка очереди и публикация (защищено декоратором)"""
-    # 1. Горячие новости
-    hot_news = await db.get_hot_news()
+    # 1. Горячие новости (приоритет >= 6)
+    hot_news = await db.get_hot_news(min_priority=6)
     is_hot = False
 
     if hot_news:
         news_item = hot_news
         is_hot = True
-        logger.info("🔥 Молния! Публикую вне очереди.")
+        priority = news_item.get('priority', 0)
+        logger.info(f"🔥 Молния! Публикую вне очереди (priority={priority}).")
     else:
         # 2. Обычная очередь
         if not rate_limiter.can_post():
@@ -201,8 +253,18 @@ async def check_queue_and_post():
         logger.error(f"❌ Ошибка AI обработки: {e}", exc_info=True)
         # Продолжаем публикацию с оригинальными данными
 
-    prices = await get_multiple_crypto_prices()
-    fear_greed = await FearGreedIndexTracker.get_fear_greed_index()
+    # Получение цен и индекса с обработкой ошибок
+    try:
+        prices = await get_multiple_crypto_prices()
+    except Exception as e:
+        logger.warning(f"⚠️ Ошибка получения цен: {e}")
+        prices = None
+
+    try:
+        fear_greed = await FearGreedIndexTracker.get_fear_greed_index()
+    except Exception as e:
+        logger.warning(f"⚠️ Ошибка получения индекса страха: {e}")
+        fear_greed = None
 
     msg_data = AdvancedMessageFormatter.format_professional_news(
         title=news_item['title'],
@@ -267,6 +329,7 @@ async def monitor_health():
 # === ГЛАВНАЯ ФУНКЦИЯ ===
 async def main():
     """Главная функция с глобальной обработкой ошибок"""
+    background_tasks = []  # Отслеживаем фоновые задачи для правильного cleanup
     try:
         logger.info("=" * 60)
         logger.info("🚀 CRYPTO NEWS BOT - ЗАПУСК")
@@ -284,7 +347,8 @@ async def main():
         # 2. Запуск Userbot
         if config.tg_api_id and config.tg_api_hash:
             logger.info("🎧 Запуск Telegram Userbot...")
-            asyncio.create_task(safe_start_listener())
+            task = asyncio.create_task(safe_start_listener())
+            background_tasks.append(task)
         else:
             logger.warning("⚠️ Userbot отключен (нет TG_API_ID/TG_API_HASH)")
 
@@ -298,7 +362,7 @@ async def main():
         )
         scheduler.add_job(
             check_queue_and_post,
-            IntervalTrigger(seconds=30),
+            IntervalTrigger(seconds=60),  # Увеличено до 60 секунд для снижения нагрузки
             id="queue_poster",
             name="Queue Poster"
         )
@@ -339,6 +403,16 @@ async def main():
 
     finally:
         logger.info("🧹 Очистка ресурсов...")
+
+        # Отменяем фоновые задачи
+        if background_tasks:
+            for task in background_tasks:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
 
         # Остановка планировщика
         if scheduler.running:
