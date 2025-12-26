@@ -1,4 +1,5 @@
 # config.py
+import os
 from typing import Optional, List, Union
 from pydantic import Field, field_validator, ValidationError
 from pydantic_settings import BaseSettings
@@ -152,3 +153,5 @@ SOURCE_CHANNELS = config.get_source_channels_list()  # ⚠️ ИСПРАВЛЕН
 PARSE_INTERVAL = config.parse_interval
 FILTER_ENABLED = config.filter_enabled
 LOG_LEVEL = config.log_level
+
+TG_PHONE_NUMBER = os.getenv("TG_PHONE_NUMBER")

@@ -7,6 +7,7 @@ from telethon.sessions import StringSession
 from config import config
 from database import db
 from services.ai_summary import NewsAnalyzer
+from config import TG_API_ID, TG_API_HASH, SOURCE_CHANNELS, TG_PHONE_NUMBER
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ class TelegramListener:
             logger.info(f"📡 Источники: {self.source_channels}")
 
             # 4. Подключение
-            await self.client.start()
+            await self.client.start(phone=TG_PHONE_NUMBER)
 
             # 5. Проверка авторизации
             if not await self.client.is_user_authorized():
