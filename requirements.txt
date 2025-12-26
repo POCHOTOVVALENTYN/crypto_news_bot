@@ -8,12 +8,13 @@ apscheduler==3.10.4
 
 # AI providers
 openai==1.40.0
-google-generativeai>=0.8.3
+# ✅ ИСПРАВЛЕНО: Используем новую библиотеку google-genai (старая google-generativeai deprecated)
+google-genai>=0.3.0
 
 # Telegram userbot
 telethon==1.34.0
 
-# Configuration & validation (NEW)
+# Configuration & validation
 pydantic==2.5.3
 pydantic-settings==2.1.0
 

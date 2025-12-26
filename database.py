@@ -14,7 +14,7 @@ class NewsDatabase:
 
     async def init(self):
         async with aiosqlite.connect(self.db_path) as db:
-            # Добавили колонку priority (0 - обычно, 1 - молния)
+            # Добавили колонку priority (0-10 - расширенная система приоритетов)
             await db.execute("""
                              CREATE TABLE IF NOT EXISTS news
                              (
@@ -30,6 +30,13 @@ class NewsDatabase:
                                  priority           INTEGER DEFAULT 0
                              )
                              """)
+            
+            # Добавляем индекс для быстрого поиска по приоритету
+            await db.execute("""
+                             CREATE INDEX IF NOT EXISTS idx_priority_posted 
+                             ON news(priority DESC, posted_to_telegram, id ASC)
+                             """)
+            
             await db.commit()
 
     async def execute(self, query: str, args=()):
@@ -82,14 +89,28 @@ class NewsDatabase:
                 await db.commit()
             return True
         except aiosqlite.IntegrityError:
+            # Дубликат - это нормально
+            return False
+        except Exception as e:
+            # Другие ошибки БД (подключение, блокировка и т.д.)
+            logger.error(f"❌ Ошибка добавления новости в БД: {e}", exc_info=True)
             return False
 
-    async def get_hot_news(self):
-        """Ищет самую старую НЕОПУБЛИКОВАННУЮ новость с ВЫСОКИМ приоритетом"""
+    async def get_hot_news(self, min_priority: int = 6):
+        """
+        Ищет самую старую НЕОПУБЛИКОВАННУЮ новость с высоким приоритетом
+        
+        Args:
+            min_priority: Минимальный приоритет для "горячей" новости (по умолчанию 6)
+        
+        Returns:
+            Словарь с новостью или None
+        """
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                    "SELECT * FROM news WHERE posted_to_telegram = 0 AND priority = 1 ORDER BY id ASC LIMIT 1"
+                    "SELECT * FROM news WHERE posted_to_telegram = 0 AND priority >= ? ORDER BY priority DESC, id ASC LIMIT 1",
+                    (min_priority,)
             ) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None

@@ -185,7 +185,7 @@ class RSSParser:
                 async with session.get(
                         feed_url,
                         headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=20)
+                        timeout=aiohttp.ClientTimeout(total=30)
                 ) as resp:
                     if resp.status == 200:
                         content = await resp.text()
