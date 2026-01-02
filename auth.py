@@ -1,71 +1,154 @@
 # auth.py
+"""
+Интерактивная авторизация Userbot для Telegram.
+Создает сессию и выводит TG_SESSION_STRING для добавления в .env
+"""
 import asyncio
-import os
+import sys
 from telethon import TelegramClient
+from telethon.sessions import StringSession
+from telethon.errors import SessionPasswordNeededError, PhoneNumberInvalidError
 from config import TG_API_ID, TG_API_HASH
-
-# Принудительно задаем параметры, чтобы Telegram не считал нас ботом
-DEVICE_MODEL = "Desktop"
-SYSTEM_VERSION = "Windows 10"
-APP_VERSION = "4.16.30"
 
 
 async def main():
-    print("🚀 Запуск мастера авторизации...")
+    print("=" * 60)
+    print("🔐 МАСТЕР АВТОРИЗАЦИИ USERBOT")
+    print("=" * 60)
+    print()
 
-    if not TG_API_ID or not TG_API_HASH:
-        print("❌ Ошибка: Проверьте TG_API_ID и TG_API_HASH в файле .env")
-        return
+    # Проверка конфигурации
+    if not TG_API_ID or TG_API_ID == 0:
+        print("❌ Ошибка: TG_API_ID не установлен в .env")
+        print("💡 Получите на https://my.telegram.org")
+        return 1
 
-    # 1. Инициализация чистого клиента
-    client = TelegramClient(
-        'anon_session',
-        TG_API_ID,
-        TG_API_HASH,
-        device_model=DEVICE_MODEL,
-        system_version=SYSTEM_VERSION,
-        app_version=APP_VERSION
-    )
+    if not TG_API_HASH:
+        print("❌ Ошибка: TG_API_HASH не установлен в .env")
+        print("💡 Получите на https://my.telegram.org")
+        return 1
 
-    await client.connect()
+    # Используем StringSession для получения строки сессии
+    session = StringSession()
+    client = TelegramClient(session, TG_API_ID, TG_API_HASH)
 
-    if not await client.is_user_authorized():
-        print("\n☎️ Введите номер телефона в международном формате.")
-        print("Пример: +380631234567 (Обязательно с плюсом!)")
+    try:
+        print("🔌 Подключение к Telegram...")
+        await client.connect()
 
-        phone = input("Ваш номер: ").strip()
+        if not await client.is_user_authorized():
+            print("\n📱 ТРЕБУЕТСЯ АВТОРИЗАЦИЯ")
+            print("-" * 60)
 
-        if not phone.startswith('+'):
-            print("⚠️ Ошибка: Номер должен начинаться с '+'")
-            return
+            # Ввод номера телефона
+            print("\n☎️ Введите номер телефона в международном формате:")
+            print("   Пример: +380635609097 (обязательно с плюсом!)")
+            phone = input("\nВаш номер: ").strip()
 
-        try:
-            await client.send_code_request(phone)
-            print("\n✅ Код отправлен! Проверьте приложение Telegram (на телефоне или ПК).")
-            print("Это НЕ СМС, код придет в чат от Telegram.")
-        except Exception as e:
-            print(f"\n❌ Ошибка отправки кода: {e}")
-            return
+            if not phone.startswith('+'):
+                print("❌ Ошибка: Номер должен начинаться с '+' (например, +380635609097)")
+                await client.disconnect()
+                return 1
 
-        code = input("Введите код из Telegram: ")
+            # Запрос кода
+            print("\n⏳ Отправка кода подтверждения...")
+            try:
+                await client.send_code_request(phone)
+                print("✅ Код отправлен!")
+                print("\n📬 ВАЖНО: Код придет в ОТКРЫТОЕ приложение Telegram")
+                print("   (на телефоне или ПК, где вы уже авторизованы)")
+                print("   Это НЕ СМС, а сообщение в чате от Telegram")
+            except PhoneNumberInvalidError:
+                print(f"❌ Ошибка: Неверный номер телефона: {phone}")
+                print("💡 Убедитесь что номер правильный и в международном формате")
+                await client.disconnect()
+                return 1
+            except Exception as e:
+                print(f"❌ Ошибка отправки кода: {e}")
+                print("\n💡 Возможные причины:")
+                print("   - Слишком частые запросы кода (подождите 5-10 минут)")
+                print("   - Проблемы с сетью")
+                print("   - Telegram заблокирован в вашем регионе")
+                await client.disconnect()
+                return 1
 
-        try:
-            await client.sign_in(phone, code)
-        except Exception as e:
-            if "password" in str(e).lower():
-                password = input("🔐 Введите ваш облачный пароль (2FA): ")
-                await client.sign_in(password=password)
-            else:
+            # Ввод кода
+            print("\n" + "-" * 60)
+            code = input("Введите код из Telegram: ").strip()
+
+            if not code:
+                print("❌ Код не введен")
+                await client.disconnect()
+                return 1
+
+            # Авторизация
+            try:
+                await client.sign_in(phone, code)
+            except SessionPasswordNeededError:
+                print("\n🔐 Требуется пароль 2FA (облачный пароль)")
+                password = input("Введите ваш облачный пароль: ")
+                try:
+                    await client.sign_in(password=password)
+                except Exception as e:
+                    print(f"❌ Ошибка входа с паролем: {e}")
+                    await client.disconnect()
+                    return 1
+            except Exception as e:
                 print(f"❌ Ошибка входа: {e}")
-                return
+                print("\n💡 Возможные причины:")
+                print("   - Неверный код (проверьте код еще раз)")
+                print("   - Код устарел (код действителен несколько минут)")
+                print("   - Слишком много неудачных попыток")
+                await client.disconnect()
+                return 1
 
-    user = await client.get_me()
-    print(f"\n🎉 Успешно! Вы вошли как: {user.first_name} (@{user.username})")
-    print("💾 Файл сессии 'anon_session.session' создан.")
-    print("👉 Теперь запускайте 'python main.py'")
+        # Получение информации о пользователе
+        me = await client.get_me()
+        print("\n" + "=" * 60)
+        print("✅ АВТОРИЗАЦИЯ УСПЕШНА!")
+        print("=" * 60)
+        print(f"👤 Пользователь: {me.first_name} {me.last_name or ''}")
+        print(f"📱 Username: @{me.username}" if me.username else "📱 Username: (не установлен)")
+        print(f"🆔 ID: {me.id}")
 
-    await client.disconnect()
+        # Получение StringSession
+        session_string = client.session.save()
+        if not session_string or session_string == "None":
+            print("\n❌ Ошибка: Не удалось получить строку сессии")
+            await client.disconnect()
+            return 1
+
+        # Вывод инструкций
+        print("\n" + "=" * 60)
+        print("📋 ДОБАВЬТЕ ЭТУ СТРОКУ В .env ФАЙЛ:")
+        print("=" * 60)
+        print(f"TG_SESSION_STRING={session_string}")
+        print("=" * 60)
+        print("\n💡 ИНСТРУКЦИИ:")
+        print("1. Откройте файл .env")
+        print("2. Найдите строку TG_SESSION_STRING (или добавьте новую)")
+        print("3. Замените/добавьте значение на строку выше")
+        print("4. Сохраните файл")
+        print("5. Перезапустите бота: python main.py")
+        print("\n⚠️ ВАЖНО: Храните TG_SESSION_STRING в безопасности!")
+        print("   Это как пароль от вашего Telegram аккаунта")
+        print("=" * 60)
+
+        await client.disconnect()
+        return 0
+
+    except KeyboardInterrupt:
+        print("\n\n⚠️ Прервано пользователем")
+        await client.disconnect()
+        return 1
+    except Exception as e:
+        print(f"\n❌ Критическая ошибка: {e}")
+        import traceback
+        traceback.print_exc()
+        await client.disconnect()
+        return 1
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    exit_code = asyncio.run(main())
+    sys.exit(exit_code)

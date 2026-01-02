@@ -18,6 +18,8 @@ class NewsAnalyzer:
         self.client = None
         self.model_name = None
         self.openai_client = None
+        self._last_api_call_time = 0  # Для rate limiting
+        self._min_delay_seconds = 1.5  # Минимальная задержка между запросами (1.5 секунды)
 
         # 1. Инициализация OpenAI (Fallback)
         if OPENAI_API_KEY:
@@ -68,6 +70,9 @@ class NewsAnalyzer:
             logger.error("❌ OpenAI не настроен, но был вызван как fallback")
             return None
 
+        # Rate limiting для OpenAI тоже
+        await self._rate_limit_wait()
+
         try:
             logger.info("🤖 Переключаюсь на OpenAI (Fallback)...")
             response = await self.openai_client.chat.completions.create(
@@ -85,8 +90,23 @@ class NewsAnalyzer:
             logger.error(f"❌ OpenAI Error: {e}")
             return None
 
+    async def _rate_limit_wait(self):
+        """Ожидание для соблюдения rate limiting"""
+        import time
+        current_time = time.time()
+        time_since_last_call = current_time - self._last_api_call_time
+        
+        if time_since_last_call < self._min_delay_seconds:
+            wait_time = self._min_delay_seconds - time_since_last_call
+            await asyncio.sleep(wait_time)
+        
+        self._last_api_call_time = time.time()
+
     async def analyze_text(self, text: str, context: str = "news") -> Optional[Dict]:
         """Универсальный метод анализа с улучшенным промптом"""
+        
+        # Rate limiting: задержка между запросами
+        await self._rate_limit_wait()
 
         prompt = f"""Ты эксперт-аналитик криптовалютного рынка с 10+ летним опытом.
 

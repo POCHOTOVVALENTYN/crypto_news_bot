@@ -3,8 +3,9 @@ import logging
 import asyncio
 from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError
+from telethon.sessions import StringSession
 from telethon.tl.types import User, Channel
-from config import TG_API_ID, TG_API_HASH, SOURCE_CHANNELS
+from config import TG_API_ID, TG_API_HASH, SOURCE_CHANNELS, TG_SESSION_STRING
 from database import db
 from services.ai_summary import NewsAnalyzer
 
@@ -15,37 +16,54 @@ class TelegramListener:
     def __init__(self):
         self.client = None
         self.ai = NewsAnalyzer()
-        self.source_channels = [ch.strip() for ch in SOURCE_CHANNELS if ch.strip()]
+        self.source_channels = SOURCE_CHANNELS if isinstance(SOURCE_CHANNELS, list) else []
         self.is_running = False
 
     async def start(self):
         """Запуск прослушки (только если есть сессия)"""
 
-        if not TG_API_ID or not TG_API_HASH:
+        if not TG_API_ID or TG_API_ID == 0 or not TG_API_HASH:
             logger.warning("⚠️ TG_API_ID/HASH не установлены. Userbot выключен.")
             return
 
+        if not self.source_channels:
+            logger.warning("⚠️ SOURCE_CHANNELS пуст. Userbot выключен.")
+            return
+
         try:
-            # 1. Инициализация (Используем стандартные параметры, чтобы не пугать Telegram)
+            # 1. Выбор типа сессии: StringSession (приоритет) или файл
+            if TG_SESSION_STRING:
+                logger.info("✅ Использую StringSession из TG_SESSION_STRING")
+                session = StringSession(TG_SESSION_STRING)
+            else:
+                logger.info("📁 Использую файл сессии (рекомендуется использовать TG_SESSION_STRING)")
+                session = 'anon_session'
+
+            # 2. Инициализация клиента
             self.client = TelegramClient(
-                'anon_session',
+                session,
                 TG_API_ID,
-                TG_API_HASH,
-                device_model="Desktop",
-                system_version="Windows 10",
-                app_version="4.16.30"
+                TG_API_HASH
+                # Не указываем device_model/system_version/app_version - используем стандартные
             )
 
             logger.info("🎧 Подключение Userbot...")
 
-            # 2. Просто подключаемся. НЕ вызываем start() с интерактивным вводом.
+            # 3. Подключение (НЕ start() - это блокирует бота!)
             await self.client.connect()
 
-            # 3. Проверка: Если не авторизован - выходим, не блокируем бота.
+            # 4. Проверка авторизации
             if not await self.client.is_user_authorized():
+                logger.error("=" * 60)
                 logger.error("🛑 USERBOT НЕ АВТОРИЗОВАН!")
-                logger.error("➡️ Остановите бота и запустите 'python auth.py' для входа.")
-                # Не прерываем работу основного бота, просто отключаем слушателя
+                logger.error("=" * 60)
+                logger.error("📋 ИНСТРУКЦИЯ:")
+                logger.error("1. Остановите бота (Ctrl+C)")
+                logger.error("2. Запустите: python auth.py")
+                logger.error("3. Следуйте инструкциям для авторизации")
+                logger.error("4. Добавьте TG_SESSION_STRING в .env")
+                logger.error("5. Перезапустите бота")
+                logger.error("=" * 60)
                 await self.client.disconnect()
                 return
 
@@ -112,7 +130,7 @@ class TelegramListener:
                     source=f"⚡ Insider ({source_title})",
                     published_at="Just now",
                     image_url=None,
-                    priority=1
+                    priority=10  # Максимальный приоритет для Insider новостей
                 )
 
         except Exception as e:

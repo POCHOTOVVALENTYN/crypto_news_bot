@@ -154,8 +154,8 @@ async def scheduled_parsing():
             filtered_count += 1
             continue
         
-        # Проверка актуальности
-        if not NewsValidator.is_news_relevant(news):
+        # Проверка свежести (новости не старше 24 часов)
+        if not NewsValidator.is_today_news(news):
             filtered_count += 1
             continue
         
@@ -163,24 +163,9 @@ async def scheduled_parsing():
         if await db.news_exists(news['link']):
             continue
         
-        # Предварительный расчет приоритета БЕЗ AI (быстро, без запросов к API)
-        priority_quick = PriorityCalculator.calculate_priority(news, None)
-        
-        # AI анализ ТОЛЬКО для потенциально важных новостей (приоритет >= 6 по ключевым словам)
-        # Это значительно снижает количество запросов к API
-        ai_analysis = None
-        if priority_quick >= 6:
-            try:
-                ai_analysis = await ai_analyzer.analyze_text(
-                    news['title'] + " " + news['summary']
-                )
-                if ai_analysis:
-                    logger.debug(f"✅ AI анализ выполнен для: {news['title'][:50]}")
-            except Exception as e:
-                logger.warning(f"⚠️ Ошибка предварительного AI анализа: {e}")
-        
-        # Финальный расчет приоритета (с учетом AI если был выполнен)
-        priority = PriorityCalculator.calculate_priority(news, ai_analysis)
+        # Расчет приоритета БЕЗ AI (быстро, без запросов к API)
+        # AI анализ будет выполняться только при публикации для перевода и улучшения
+        priority = PriorityCalculator.calculate_priority(news, None)
         
         # Фильтруем только нулевой приоритет (совсем нерелевантные новости)
         # Priority используется для сортировки, а не для жесткой фильтрации
