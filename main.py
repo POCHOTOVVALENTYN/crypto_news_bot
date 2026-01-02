@@ -2,7 +2,11 @@
 import asyncio
 import logging
 import sys
+import warnings
 from pathlib import Path
+
+# Подавляем Pydantic warnings о shadowing attributes
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic._internal._fields")
 from aiogram import Bot, Dispatcher, Router
 from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -178,9 +182,10 @@ async def scheduled_parsing():
         # Финальный расчет приоритета (с учетом AI если был выполнен)
         priority = PriorityCalculator.calculate_priority(news, ai_analysis)
         
-        # Фильтруем низкоприоритетные новости
-        if priority < 2:
-            logger.debug(f"⏭️ Пропуск низкоприоритетной новости (priority={priority})")
+        # Фильтруем только нулевой приоритет (совсем нерелевантные новости)
+        # Priority используется для сортировки, а не для жесткой фильтрации
+        if priority == 0:
+            logger.debug(f"⏭️ Пропуск нулевой приоритет (priority={priority}): {news['title'][:50]}")
             filtered_count += 1
             continue
         

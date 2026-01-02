@@ -81,12 +81,17 @@ class PriorityCalculator:
                 priority = max(priority, 6)
                 logger.debug(f"Упомянута персона '{person}' → приоритет минимум 6")
         
-        # 3. Премиум источники
+        # 3. Премиум источники - минимальный приоритет для всех новостей
         if any(ps in source for ps in PriorityCalculator.PREMIUM_SOURCES):
-            priority = max(priority, 4)
-            logger.debug(f"Премиум источник '{source}' → приоритет минимум 4")
+            priority = max(priority, 3)  # Минимум 3 для премиум источников
+            logger.debug(f"Премиум источник '{source}' → приоритет минимум 3")
         
-        # 4. AI анализ важности
+        # 4. Базовый приоритет - если нет ключевых слов, но новость валидна, даем минимум 1
+        if priority == 0 and text:
+            # Новости от известных источников имеют минимальный приоритет
+            priority = 1
+        
+        # 5. AI анализ важности
         if ai_data:
             importance = ai_data.get('importance', '').lower()
             importance_score = ai_data.get('importance_score', 0)
@@ -104,7 +109,7 @@ class PriorityCalculator:
             if isinstance(importance_score, (int, float)) and importance_score > 0:
                 priority = max(priority, min(int(importance_score), 10))
         
-        # 5. Insider источники - максимальный приоритет
+        # 6. Insider источники - максимальный приоритет
         if 'insider' in source:
             priority = 10
             logger.debug("Insider источник → приоритет 10")
