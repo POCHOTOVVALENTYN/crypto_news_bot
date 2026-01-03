@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # === AI PROVIDERS (Хотя бы один обязателен) ===
     openai_api_key: Optional[str] = Field(None, description="OpenAI API key")
     gemini_api_key: Optional[str] = Field(None, description="Google Gemini API key")
+    mistral_api_key: Optional[str] = Field(None, description="Mistral AI API key")
 
     # === TELEGRAM USERBOT (Опциональные) ===
     tg_api_id: int = Field(0, description="Telegram API ID from my.telegram.org")
@@ -68,10 +69,10 @@ class Settings(BaseSettings):
 
     def validate_ai_providers(self):
         """Проверяет что хотя бы один AI провайдер настроен"""
-        if not self.openai_api_key and not self.gemini_api_key:
+        if not self.openai_api_key and not self.gemini_api_key and not self.mistral_api_key:
             raise ValueError(
                 "❌ Необходим хотя бы один AI провайдер!\n"
-                "Установите OPENAI_API_KEY или GEMINI_API_KEY в .env"
+                "Установите OPENAI_API_KEY, GEMINI_API_KEY или MISTRAL_API_KEY в .env"
             )
 
     def get_source_channels_list(self) -> List[str]:
@@ -146,6 +147,7 @@ TELEGRAM_CHANNEL_ID = config.telegram_channel_id
 ADMIN_ID = config.admin_id
 OPENAI_API_KEY = config.openai_api_key
 GEMINI_API_KEY = config.gemini_api_key
+MISTRAL_API_KEY = config.mistral_api_key
 TG_API_ID = config.tg_api_id
 TG_API_HASH = config.tg_api_hash
 TG_SESSION_STRING = config.tg_session_string

@@ -1,6 +1,7 @@
 # database.py
 import aiosqlite
 import logging
+from typing import Optional, Dict
 from thefuzz import fuzz
 
 DB_PATH = "crypto_news.db"
@@ -22,6 +23,7 @@ class NewsDatabase:
                                  url                TEXT UNIQUE NOT NULL,
                                  title              TEXT        NOT NULL,
                                  summary            TEXT,
+                                 full_content       TEXT,
                                  image_url          TEXT,
                                  source             TEXT        NOT NULL,
                                  published_at       TEXT        NOT NULL,
@@ -30,6 +32,19 @@ class NewsDatabase:
                                  priority           INTEGER DEFAULT 0
                              )
                              """)
+            
+            # ✅ МИГРАЦИЯ: Добавляем колонку full_content если её нет
+            try:
+                # Проверяем существование колонки
+                async with db.execute("PRAGMA table_info(news)") as cursor:
+                    columns = [row[1] for row in await cursor.fetchall()]
+                    if 'full_content' not in columns:
+                        await db.execute("ALTER TABLE news ADD COLUMN full_content TEXT")
+                        await db.commit()
+                        logger.info("✅ Добавлена колонка full_content в таблицу news")
+            except Exception as e:
+                # Игнорируем ошибки миграции
+                logger.debug(f"⚠️ Миграция full_content: {e}")
             
             # Добавляем индекс для быстрого поиска по приоритету
             await db.execute("""
@@ -77,14 +92,28 @@ class NewsDatabase:
             return False
 
     async def add_news(self, url: str, title: str, summary: str, source: str,
-                       published_at: str, image_url: str = None, priority: int = 0) -> bool:
+                       published_at: str, image_url: str = None, priority: int = 0,
+                       full_content: str = None) -> bool:
+        """
+        Добавляет новость в БД
+        
+        Args:
+            url: URL новости
+            title: Заголовок
+            summary: Краткое описание (для обратной совместимости)
+            source: Источник
+            published_at: Дата публикации
+            image_url: URL изображения
+            priority: Приоритет (0-10)
+            full_content: Полный текст статьи (новое поле)
+        """
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(
                     """INSERT INTO news
-                           (url, title, summary, source, published_at, image_url, priority)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (url, title, summary, source, published_at, image_url, priority)
+                           (url, title, summary, full_content, source, published_at, image_url, priority)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (url, title, summary, full_content, source, published_at, image_url, priority)
                 )
                 await db.commit()
             return True
@@ -96,7 +125,7 @@ class NewsDatabase:
             logger.error(f"❌ Ошибка добавления новости в БД: {e}", exc_info=True)
             return False
 
-    async def get_hot_news(self, min_priority: int = 6):
+    async def get_hot_news(self, min_priority: int = 6) -> Optional[Dict]:
         """
         Ищет самую старую НЕОПУБЛИКОВАННУЮ новость с высоким приоритетом
         

@@ -7,20 +7,43 @@ aiosqlite==0.19.0
 apscheduler==3.10.4
 
 # AI providers
-openai==1.40.0
+# ✅ ИСПРАВЛЕНО: Обновлено до версии, совместимой с httpx>=0.28.1
+# openai 1.40.0 несовместим с httpx>=0.28.1 (ошибка: unexpected keyword argument 'proxies')
+# Версии 1.55.2-1.55.3 также несовместимы, требуется >=1.69.0
+openai>=1.69.0
 # ✅ ИСПРАВЛЕНО: Используем новую библиотеку google-genai (старая google-generativeai deprecated)
-google-genai>=0.3.0
+# ВАЖНО: Версия должна быть совместима с pydantic<2.6 (требование aiogram)
+# Версии >=1.47.0 требуют pydantic>=2.9.0, поэтому ограничиваем до версий <1.47.0
+google-genai>=1.0.0,<1.47.0
+# ⚠️ Mistral AI временно отключен из-за конфликтов зависимостей:
+# - mistralai требует pydantic>=2.9.0 (несовместимо с aiogram 3.3.0, который требует pydantic<2.6)
+# - mistralai<1.3.0 требует httpx<0.28.0 (несовместимо с google-genai, который требует httpx>=0.28.1)
+# Для использования Mistral AI потребуется обновить aiogram или сделать Mistral опциональным
+# mistralai>=1.0.0
 
 # Telegram userbot
 telethon==1.34.0
 
 # Configuration & validation
-pydantic==2.5.3
+pydantic>=2.4.1,<2.6
 pydantic-settings==2.1.0
 
 # Text processing
 thefuzz==0.22.1
 python-levenshtein==0.25.0
+deep-translator>=1.11.0
 
 # Additional utilities
-httpx==0.27.0
+# ✅ ИСПРАВЛЕНО: httpx>=0.28.1 для совместимости с google-genai
+# openai 1.40.0 требует httpx>=0.23.0,<1.0.0
+# google-genai>=1.0.0 требует httpx>=0.28.1,<1.0.0
+httpx>=0.28.1,<1.0.0
+
+# Technical Analysis
+tradingview-ta>=3.3.0
+
+# Article extraction and summarization
+newspaper3k>=0.2.8
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+sumy>=0.11.0

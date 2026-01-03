@@ -26,6 +26,7 @@ from services.message_builder import (
 from services.ai_summary import NewsAnalyzer
 from services.rate_limiter import RateLimiter
 from services.telegram_listener import listener
+from services.translator import translator
 
 # === НОВОЕ: Система обработки ошибок ===
 from utils.error_handling import safe_task, alert_manager, critical_error_handler
@@ -146,21 +147,29 @@ async def scheduled_parsing():
     high_priority_count = 0
     filtered_count = 0
 
+    fresh_count = 0
+    duplicate_count = 0
+    validation_failed_count = 0
+    priority_zero_count = 0
+    
     for news in news_list:
         # Валидация
         is_valid, error = NewsValidator.validate_news_item(news)
         if not is_valid:
+            validation_failed_count += 1
             logger.debug(f"❌ Новость не прошла валидацию: {error}")
             filtered_count += 1
             continue
         
         # Проверка свежести (новости не старше 24 часов)
         if not NewsValidator.is_today_news(news):
+            fresh_count += 1
             filtered_count += 1
             continue
         
         # Проверка дубликатов
         if await db.news_exists(news['link']):
+            duplicate_count += 1
             continue
         
         # Расчет приоритета БЕЗ AI (быстро, без запросов к API)
@@ -170,6 +179,7 @@ async def scheduled_parsing():
         # Фильтруем только нулевой приоритет (совсем нерелевантные новости)
         # Priority используется для сортировки, а не для жесткой фильтрации
         if priority == 0:
+            priority_zero_count += 1
             logger.debug(f"⏭️ Пропуск нулевой приоритет (priority={priority}): {news['title'][:50]}")
             filtered_count += 1
             continue
@@ -178,11 +188,12 @@ async def scheduled_parsing():
         success = await db.add_news(
             url=news['link'],
             title=news['title'],
-            summary=news['summary'],
+            summary=news.get('summary', ''),
             source=news['source'],
             published_at=news['published'],
-            image_url=news['image_url'],
-            priority=priority
+            image_url=news.get('image_url'),
+            priority=priority,
+            full_content=news.get('full_content', '')  # ✅ НОВОЕ: Сохраняем полный текст
         )
         
         if success:
@@ -192,10 +203,11 @@ async def scheduled_parsing():
                 logger.info(f"🔥 Высокоприоритетная (priority={priority}): {news['title'][:50]}")
 
     logger.info(f"📥 RSS: найдено {len(news_list)}, добавлено {count} ({high_priority_count} высокоприоритетных), "
-                f"отфильтровано {filtered_count}")
+                f"отфильтровано {filtered_count} (дубликаты: {duplicate_count}, старые: {fresh_count}, "
+                f"валидация: {validation_failed_count}, приоритет 0: {priority_zero_count})")
 
 
-@safe_task("Queue Poster")
+@safe_task("Queue Poster", timeout_seconds=300)  # ✅ ИСПРАВЛЕНО: Таймаут 5 минут для предотвращения зависаний
 async def check_queue_and_post():
     """Проверка очереди и публикация (защищено декоратором)"""
     # 1. Горячие новости (приоритет >= 6)
@@ -221,27 +233,102 @@ async def check_queue_and_post():
 
     # Подготовка данных
     ai_data = None
+    technical_analysis = None
+    
+    # ✅ НОВОЕ: Получаем полный текст статьи (приоритет: full_content > summary)
+    full_content = news_item.get('full_content') or news_item.get('summary', '')
+    
+    # ✅ НОВОЕ: Создаем выжимку из полного текста (для экономии токенов ИИ)
+    from services.content_summarizer import ContentSummarizer
+    
+    # Если текст длинный (>1000 символов), создаем выжимку для ИИ
+    text_for_ai = full_content
+    if len(full_content) > 1000:
+        summary_for_ai = ContentSummarizer.create_extractive_summary(full_content, sentences_count=5)
+        if summary_for_ai and len(summary_for_ai) > 200:
+            text_for_ai = summary_for_ai
+            logger.debug(f"✅ Создана выжимка для ИИ: {len(full_content)} → {len(summary_for_ai)} символов")
+    
+    # Шаг 1: Перевод (если нужен) через Google Translate (быстро и дешево)
+    translated_data = None
     try:
-        if "Insider" in news_item['source']:
-            ai_data = await ai_analyzer.analyze_text(
-                news_item['title'] + " " + news_item['summary']
-            )
-            if not ai_data:
-                logger.warning(f"⚠️ AI анализ вернул None для Insider новости: {news_item['title'][:50]}")
-        else:
-            ai_result = await ai_analyzer.translate_and_analyze(
-                news_item['title'],
-                news_item['summary']
-            )
-            if ai_result:
-                news_item['title'] = ai_result.get('clean_title', news_item['title'])
-                news_item['summary'] = ai_result.get('clean_summary', news_item['summary'])
-                ai_data = ai_result
-            else:
-                logger.debug(f"ℹ️ AI перевод не выполнен для: {news_item['title'][:50]}")
+        translated_data = await translator.translate_news(
+            news_item['title'],
+            text_for_ai  # ✅ Используем выжимку для перевода
+        )
+        if translated_data:
+            # Используем переведенные данные
+            news_item['title'] = translated_data.get('ru_title', news_item['title'])
+            # Для публикации используем полный контент, но переводим выжимку
+            if 'ru_summary' in translated_data:
+                # Обновляем full_content если была переведена выжимка
+                # (в реальности лучше переводить полный текст, но для экономии токенов используем выжимку)
+                pass
+            logger.debug(f"✅ Новость переведена через Google Translate")
     except Exception as e:
-        logger.error(f"❌ Ошибка AI обработки: {e}", exc_info=True)
-        # Продолжаем публикацию с оригинальными данными
+        logger.debug(f"⚠️ Ошибка перевода через Google Translate: {e}")
+    
+    # Шаг 2: AI анализ (sentiment, coin, importance) - только если нужен
+    # Smart Filtering: Проверяем нужен ли AI анализ
+    needs_ai = PriorityCalculator.needs_ai_processing(news_item)
+    
+    if needs_ai:
+        try:
+            if "Insider" in news_item['source']:
+                # Для Insider новостей - полный AI анализ
+                ai_data = await ai_analyzer.analyze_text(
+                    news_item['title'] + " " + text_for_ai  # ✅ Используем выжимку
+                )
+                if not ai_data:
+                    logger.warning(f"⚠️ AI анализ вернул None для Insider новости: {news_item['title'][:50]}")
+            else:
+                # Для обычных новостей - только анализ (без перевода, он уже сделан через Google Translate)
+                # Используем analyze_text для получения sentiment, coin, importance
+                ai_data = await ai_analyzer.analyze_text(
+                    news_item['title'] + " " + text_for_ai  # ✅ Используем выжимку (экономия токенов!)
+                )
+                if not ai_data:
+                    logger.debug(f"ℹ️ AI анализ не выполнен для: {news_item['title'][:50]}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка AI обработки: {e}", exc_info=True)
+            # Продолжаем публикацию с переведенными/оригинальными данными
+    else:
+        logger.info(f"⏭️ Smart Filtering: пропуск AI обработки для новости: {news_item['title'][:50]}")
+    
+    # ✅ НОВОЕ: Извлекаем ключевые моменты для bullet points
+    key_points = ContentSummarizer.extract_key_points(full_content, points_count=3) if full_content else []
+    
+    # ✅ ИСПРАВЛЕНО: Переводим key_points если новость была переведена
+    if translated_data and key_points:
+        logger.debug(f"🔄 Перевожу ключевые моменты ({len(key_points)} пунктов)...")
+        translated_points = []
+        import asyncio
+        loop = asyncio.get_event_loop()
+        for point in key_points:
+            try:
+                # translate_text - синхронный метод, оборачиваем в executor
+                translated_point = await loop.run_in_executor(
+                    None, translator.translate_text, point, 'auto', 'ru'
+                )
+                if translated_point:
+                    translated_points.append(translated_point)
+                else:
+                    translated_points.append(point)  # Fallback на оригинал
+            except Exception as e:
+                logger.debug(f"⚠️ Ошибка перевода ключевого момента: {e}")
+                translated_points.append(point)  # Fallback на оригинал
+        key_points = translated_points
+        logger.debug(f"✅ Ключевые моменты переведены")
+    
+    # Получаем технический анализ если есть информация о монете
+    coin_from_ai = ai_data.get('coin') if ai_data else None
+    if coin_from_ai and coin_from_ai != 'Market':
+        try:
+            from services.technical_analysis import TechnicalAnalysis
+            technical_analysis = await TechnicalAnalysis.get_technical_analysis(coin_from_ai)
+        except Exception as e:
+            logger.debug(f"⚠️ Ошибка получения тех. анализа для {coin_from_ai}: {e}")
+            technical_analysis = None
 
     # Получение цен и индекса с обработкой ошибок
     try:
@@ -258,16 +345,27 @@ async def check_queue_and_post():
 
     msg_data = AdvancedMessageFormatter.format_professional_news(
         title=news_item['title'],
-        summary=news_item['summary'],
+        summary=news_item.get('summary', ''),
         source=news_item['source'],
         source_url=news_item['url'],
         prices=prices,
         fear_greed=fear_greed,
-        image_url=news_item['image_url'],
-        ai_data=ai_data
+        image_url=news_item.get('image_url'),
+        ai_data=ai_data,
+        technical_analysis=technical_analysis,
+        key_points=key_points,  # ✅ НОВОЕ: Ключевые моменты для bullet points
+        full_content=full_content  # ✅ НОВОЕ: Полный текст для fallback
     )
 
-    rich_msg = RichMediaMessage(msg_data['text'], msg_data['image_url'])
+    # ✅ НОВОЕ: Создаем inline-кнопки
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    keyboard_builder = InlineKeyboardBuilder()
+    keyboard_builder.button(text="💬 Открытый общий чат", url="https://t.me/+514GO2tFjAtkMWRi")
+    keyboard_builder.button(text="📢 Подписаться", url="https://t.me/blexler_invest")
+    keyboard_builder.adjust(1)  # Кнопки в одну колонку
+    inline_keyboard = keyboard_builder.as_markup()
+    
+    rich_msg = RichMediaMessage(msg_data['text'], msg_data['image_url'], reply_markup=inline_keyboard)
     if await rich_msg.send(bot, config.telegram_channel_id):
         await db.mark_as_posted(news_item['url'])
         rate_limiter.mark_posted()  # Обновляем для всех постов
@@ -337,8 +435,8 @@ async def main():
         # 2. Запуск Userbot
         if config.tg_api_id and config.tg_api_hash:
             logger.info("🎧 Запуск Telegram Userbot...")
-            task = asyncio.create_task(safe_start_listener())
-            background_tasks.append(task)
+            # Ожидаем завершения запуска для правильной проверки статуса
+            await safe_start_listener()
         else:
             logger.warning("⚠️ Userbot отключен (нет TG_API_ID/TG_API_HASH)")
 

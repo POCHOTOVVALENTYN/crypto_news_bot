@@ -2,7 +2,8 @@
 import logging
 import re
 import aiohttp
-from typing import Optional, Dict
+import random
+from typing import Optional, Dict, List
 from functools import lru_cache
 import asyncio
 
@@ -211,18 +212,85 @@ class AdvancedMessageFormatter:
         text = re.sub(r'Читать далее.*', '', text, flags=re.IGNORECASE)
         text = re.sub(r'\s+', ' ', text).strip()
         return text
+    
+    @staticmethod
+    def translate_sentiment(sentiment: str) -> str:
+        """Переводит sentiment на русский язык"""
+        translations = {
+            "Extreme Bullish": "Экстремально бычий",
+            "Bullish": "Бычий",
+            "Neutral": "Нейтральный",
+            "Bearish": "Медвежий",
+            "Extreme Bearish": "Экстремально медвежий"
+        }
+        return translations.get(sentiment, sentiment)
+    
+    @staticmethod
+    def insert_random_link(text: str, url: str) -> str:
+        """Рандомно вставляет ссылку в одно из слов текста"""
+        # Разбиваем текст на слова (сохраняем HTML теги)
+        # Находим все слова (не HTML теги)
+        words = re.findall(r'\b\w+\b', text)
+        if not words:
+            return text
+        
+        # Выбираем случайное слово
+        random_word = random.choice(words)
+        
+        # Ищем слово в тексте (учитывая, что оно может быть частью HTML тега)
+        # Заменяем только первое вхождение слова (не в HTML теге)
+        pattern = r'\b' + re.escape(random_word) + r'\b'
+        
+        # Проверяем, не находится ли слово внутри HTML тега
+        def replace_func(match):
+            start = match.start()
+            # Проверяем, что мы не внутри HTML тега
+            text_before = text[:start]
+            # Подсчитываем открытые и закрытые теги до этой позиции
+            open_tags = text_before.count('<')
+            close_tags = text_before.count('>')
+            # Если количество открытых тегов больше закрытых, мы внутри тега
+            if open_tags > close_tags:
+                return match.group(0)  # Не заменяем
+            # Заменяем на ссылку
+            return f'<a href="{url}">{match.group(0)}</a>'
+        
+        result = re.sub(pattern, replace_func, text, count=1)
+        return result
 
     @staticmethod
     def smart_truncate(text: str, length: int = 900) -> str:
+        """Обрезает текст по словам (не режет слова посередине)"""
         if len(text) <= length:
             return text
 
         cut = text[:length]
+        # Сначала ищем точку, восклицательный или вопросительный знак
         last_dot = max(cut.rfind('.'), cut.rfind('!'), cut.rfind('?'))
 
         if last_dot > length // 2:
             return cut[:last_dot + 1]
 
+        # Если знаков препинания нет, обрезаем по последнему пробелу
+        last_space = cut.rfind(' ')
+        if last_space > length * 0.7:  # Если пробел не слишком близко к началу
+            return cut[:last_space] + "..."
+        
+        # Если пробел слишком близко к началу, обрезаем с "..."
+        return cut + "..."
+    
+    @staticmethod
+    def smart_truncate_words(text: str, max_chars: int) -> str:
+        """Обрезает текст по словам (не режет слова посередине)"""
+        if len(text) <= max_chars:
+            return text
+        
+        cut = text[:max_chars]
+        last_space = cut.rfind(' ')
+        
+        if last_space > max_chars * 0.7:  # Если пробел не слишком близко к началу
+            return cut[:last_space] + "..."
+        
         return cut + "..."
 
     @staticmethod
@@ -234,7 +302,10 @@ class AdvancedMessageFormatter:
             prices: Optional[Dict] = None,
             fear_greed: Optional[Dict] = None,
             image_url: Optional[str] = None,
-            ai_data: Optional[Dict] = None
+            ai_data: Optional[Dict] = None,
+            technical_analysis: Optional[Dict] = None,
+            key_points: Optional[List[str]] = None,
+            full_content: Optional[str] = None
     ) -> Dict:
 
         # Заголовок
@@ -257,40 +328,112 @@ class AdvancedMessageFormatter:
         if not image_url:
             image_url = AdvancedMessageFormatter.COIN_IMAGES["General"]
 
-        header = f"{sentiment_emoji} <b>{title[:100]}</b> {coin_tag}\n\n"
+        # ✅ ИСПРАВЛЕНО: Увеличиваем лимит заголовка (или убираем обрезку для более полного отображения)
+        # Убираем обрезку заголовка для более полного отображения
+        title_display = title  # Не обрезаем заголовок
+        
+        # ✅ НОВОЕ: Рандомно вставляем ссылку в заголовок
+        title_with_link = AdvancedMessageFormatter.insert_random_link(title_display, source_url)
+        header = f"{sentiment_emoji} <b>{title_with_link}</b> {coin_tag}\n\n"
+
+        # ✅ НОВОЕ: Контент с ключевыми моментами (bullet points)
+        content_section = ""
+        
+        if key_points and len(key_points) > 0:
+            # Используем ключевые моменты для bullet points
+            content_section = "📝 <b>Ключевые моменты:</b>\n"
+            for point in key_points[:3]:  # Максимум 3 пункта
+                # ✅ ИСПРАВЛЕНО: Убираем обрезку ключевых моментов для более полного отображения
+                point_clean = AdvancedMessageFormatter.clean_text(point)
+                point_display = point_clean  # Не обрезаем ключевые моменты
+                # ✅ ИСПРАВЛЕНО: Убрали ссылку из ключевых моментов (оставляем только в заголовке)
+                
+                content_section += f"• {point_display}\n"
+            content_section += "\n"
+        elif full_content:
+            # Если нет key_points, используем выжимку из full_content
+            from services.content_summarizer import ContentSummarizer
+            try:
+                summary_text = ContentSummarizer.create_extractive_summary(full_content, sentences_count=3)
+                if summary_text:
+                    content_section = AdvancedMessageFormatter.clean_text(summary_text)
+                    content_section = AdvancedMessageFormatter.smart_truncate(content_section, length=400)
+                    content_section += "\n\n"
+            except Exception:
+                # Fallback на summary
+                pass
+        
+        # Если content_section пустой, используем summary
+        if not content_section:
+            summary_clean = AdvancedMessageFormatter.clean_text(summary)
+            content_section = AdvancedMessageFormatter.smart_truncate(summary_clean, length=400)
+            content_section += "\n\n"
 
         # Футер
         footer = ""
-        if ai_data and ai_data.get("sentiment"):
-            footer += f"\n📊 Настроение: {ai_data['sentiment']}"
+        
+        # ✅ ИСПРАВЛЕНО: Настроение (sentiment) на русском
+        # Проверяем наличие ai_data и sentiment более тщательно
+        if ai_data:
+            sentiment = ai_data.get("sentiment")
+            if sentiment:  # Проверяем, что sentiment не пустой
+                sentiment_ru = AdvancedMessageFormatter.translate_sentiment(sentiment)
+                footer += f"📊 <b>Настроение:</b> {sentiment_ru}\n"
+        
+        # Индекс страха
         if fear_greed:
-            footer += f"\n😱 Индекс страха: {fear_greed['value']}/100"
+            footer += f"😱 <b>Индекс страха:</b> {fear_greed['value']}/100\n"
+        
+        # ✅ ИСПРАВЛЕНО: Убрали разделитель после индекса страха
+        
+        # ✅ ИСПРАВЛЕНО: Цены (каждая монета с новой строки + изменение за 24ч)
         if prices:
-            price_str = CryptoMultiPriceTracker.format_multi_prices(prices)
-            if price_str:
-                footer += f"\n\n{price_str}"
+            if "bitcoin" in prices:
+                change_24h = prices['bitcoin'].get('change', 0)
+                change_emoji = "📈" if change_24h >= 0 else "📉"
+                footer += f"{change_emoji} BTC: ${prices['bitcoin']['price']:,.0f} ({change_24h:+.2f}%)\n"
+            if "ethereum" in prices:
+                change_24h = prices['ethereum'].get('change', 0)
+                change_emoji = "📈" if change_24h >= 0 else "📉"
+                footer += f"{change_emoji} ETH: ${prices['ethereum']['price']:,.0f} ({change_24h:+.2f}%)\n"
+            if "solana" in prices:
+                change_24h = prices['solana'].get('change', 0)
+                change_emoji = "📈" if change_24h >= 0 else "📉"
+                footer += f"{change_emoji} SOL: ${prices['solana']['price']:.2f} ({change_24h:+.2f}%)\n"
 
-        footer += f"\n\n📰 <a href='{source_url}'>{source}</a>"
-        footer += f"\n👥 <a href='https://t.me/+hwsBvRtEj2w3NTli'>ОБЩИЙ ЧАТ BLEXLER</a>"
-
-        # Расчет длины
-        available_len = 1024 - len(header) - len(footer) - 50
-        if available_len < 100:
-            available_len = 100
-
-        summary = AdvancedMessageFormatter.clean_text(summary)
-        summary_display = AdvancedMessageFormatter.smart_truncate(summary, length=available_len)
+        # Сборка сообщения
+        text = f"{header}{content_section}{footer}"
+        
+        # Проверка длины (Telegram limit: 1024 символа)
+        if len(text) > 1024:
+            # Укорачиваем контент
+            max_content_len = 1024 - len(header) - len(footer) - 50
+            if max_content_len > 100:
+                if key_points:
+                    # Укорачиваем ключевые моменты
+                    content_section = "📝 <b>Ключевые моменты:</b>\n"
+                    for point in key_points[:2]:  # Оставляем только 2 пункта
+                        point_clean = AdvancedMessageFormatter.clean_text(point)
+                        point_display = point_clean[:max_content_len // 2] + "..."
+                        content_section += f"• {point_display}\n"
+                    content_section += "\n"
+                else:
+                    content_section = AdvancedMessageFormatter.smart_truncate(
+                        content_section, length=max_content_len
+                    ) + "\n\n"
+                text = f"{header}{content_section}{footer}"
 
         return {
-            "text": f"{header}{summary_display}{footer}",
+            "text": text,
             "image_url": image_url
         }
 
 
 class RichMediaMessage:
-    def __init__(self, text: str, image_url: Optional[str] = None):
+    def __init__(self, text: str, image_url: Optional[str] = None, reply_markup=None):
         self.text = text
         self.image_url = image_url
+        self.reply_markup = reply_markup
 
     async def send(self, bot, chat_id: int):
         try:
@@ -300,7 +443,8 @@ class RichMediaMessage:
                         chat_id=chat_id,
                         photo=self.image_url,
                         caption=self.text,
-                        parse_mode="HTML"
+                        parse_mode="HTML",
+                        reply_markup=self.reply_markup
                     )
                     logger.info("✅ Фото + текст отправлены")
                 except Exception as e:
@@ -309,14 +453,16 @@ class RichMediaMessage:
                         chat_id=chat_id,
                         text=self.text,
                         parse_mode="HTML",
-                        disable_web_page_preview=True
+                        disable_web_page_preview=True,
+                        reply_markup=self.reply_markup
                     )
             else:
                 await bot.send_message(
                     chat_id=chat_id,
                     text=self.text,
                     parse_mode="HTML",
-                    disable_web_page_preview=True
+                    disable_web_page_preview=True,
+                    reply_markup=self.reply_markup
                 )
             return True
 

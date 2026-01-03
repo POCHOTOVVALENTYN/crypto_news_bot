@@ -116,3 +116,65 @@ class PriorityCalculator:
         
         return min(priority, 10)  # Ограничиваем максимумом 10
 
+    @staticmethod
+    def needs_ai_processing(news_item: Dict) -> bool:
+        """
+        Определяет, нужен ли AI анализ для новости (Smart Filtering).
+        
+        Критерии для "AI НЕ нужен":
+        - Новость короткая (< 300 символов) И содержит кириллицу (русский язык)
+        - Новость содержит только ценовую информацию (price action) без важного контекста
+        - Простые анонсы листинга без деталей
+        
+        Args:
+            news_item: Словарь с новостью (title, summary, source)
+        
+        Returns:
+            True если нужен AI анализ, False если можно обойтись без него
+        """
+        import re
+        
+        title = news_item.get('title', '')
+        summary = news_item.get('summary', '')
+        source = news_item.get('source', '').lower()
+        
+        full_text = (title + ' ' + summary).strip()
+        text_length = len(full_text)
+        text_lower = full_text.lower()
+        
+        # Проверяем наличие кириллицы (русский язык)
+        has_cyrillic = bool(re.search(r'[а-яА-ЯёЁ]', full_text))
+        
+        # Критерий 1: Короткая новость + русский язык = не нужен AI
+        if text_length < 300 and has_cyrillic:
+            logger.info(f"⏭️ Smart Filtering: пропуск AI (короткая русская новость, {text_length} символов)")
+            return False
+        
+        # Критерий 2: Price action (только движение цены) - не нужен AI
+        price_action_patterns = [
+            r'\b(price|jumped|dropped|increased|decreased|rose|fell)\s+[0-9.%]+',
+            r'[0-9.]+%\s+(up|down|higher|lower)',
+            r'\$[0-9,]+',
+        ]
+        is_price_action = any(re.search(pattern, text_lower, re.I) for pattern in price_action_patterns)
+        
+        # Если это только движение цены без контекста - не нужен AI
+        if is_price_action and text_length < 400:
+            # Проверяем что нет важных ключевых слов (взлом, ETF и т.д.)
+            important_keywords = ['hack', 'etf', 'sec', 'regulation', 'взлом', 'одобр', 'листинг', 'банкрот']
+            has_important_keywords = any(kw in text_lower for kw in important_keywords)
+            
+            if not has_important_keywords:
+                logger.info(f"⏭️ Smart Filtering: пропуск AI (price action новость, {text_length} символов)")
+                return False
+        
+        # Критерий 3: Простые анонсы (listing, delisting) - можно без AI если короткие
+        if text_length < 250 and any(kw in text_lower for kw in ['listing', 'delisting', 'листинг', 'делистинг']):
+            # Если это просто анонс листинга без деталей - не нужен AI
+            if 'details' not in text_lower and 'подробности' not in text_lower:
+                logger.info(f"⏭️ Smart Filtering: пропуск AI (простой анонс листинга, {text_length} символов)")
+                return False
+        
+        # Во всех остальных случаях нужен AI
+        return True
+

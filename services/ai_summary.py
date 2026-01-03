@@ -8,7 +8,7 @@ import asyncio
 from typing import Optional, Dict
 
 from openai import AsyncOpenAI
-from config import OPENAI_API_KEY, GEMINI_API_KEY
+from config import OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +18,18 @@ class NewsAnalyzer:
         self.client = None
         self.model_name = None
         self.openai_client = None
-        self._last_api_call_time = 0  # Для rate limiting
-        self._min_delay_seconds = 1.5  # Минимальная задержка между запросами (1.5 секунды)
+        self.mistral_client = None
+        # Rate limiting для разных провайдеров
+        self._last_gemini_call_time = 0
+        self._last_mistral_call_time = 0
+        self._last_openai_call_time = 0
+        self._gemini_delay_seconds = 4.5  # Gemini free tier: 15 RPM = минимум 4 секунды
+        self._mistral_delay_seconds = 1.1  # Mistral free tier: 1 RPS = минимум 1 секунда
+        self._openai_delay_seconds = 1.0  # OpenAI (платный, более либеральные лимиты)
+        # ✅ ИСПРАВЛЕНО: Семафор для ограничения одновременных AI запросов (максимум 2)
+        self._ai_request_semaphore = asyncio.Semaphore(2)
 
-        # 1. Инициализация OpenAI (Fallback)
+        # 1. Инициализация OpenAI (Fallback #2)
         if OPENAI_API_KEY:
             self.openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
@@ -36,6 +44,21 @@ class NewsAnalyzer:
                 logger.error(f"❌ Критическая ошибка инициализации Gemini: {e}")
         else:
             logger.warning("⚠️ GEMINI_API_KEY не установлен.")
+        
+        # 3. Инициализация Mistral AI (Fallback #1) - ВРЕМЕННО ОТКЛЮЧЕН
+        # ⚠️ Mistral AI отключен из-за конфликтов зависимостей:
+        # - mistralai требует pydantic>=2.9.0 (несовместимо с aiogram 3.3.0)
+        # - mistralai<1.3.0 требует httpx<0.28.0 (несовместимо с google-genai)
+        # Для использования Mistral AI потребуется обновить aiogram до версии, поддерживающей pydantic>=2.9.0
+        if False and MISTRAL_API_KEY:  # Временно отключено
+            try:
+                from mistralai import Mistral
+                self.mistral_client = Mistral(api_key=MISTRAL_API_KEY)
+                logger.info("✅ Mistral AI подключен (Fallback #1)")
+            except ImportError:
+                logger.warning("⚠️ mistralai не установлен, Mistral AI недоступен. Установите: pip install mistralai")
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка инициализации Mistral AI: {e}")
 
     def _find_best_model(self):
         """Выбирает стабильную модель для free tier"""
@@ -64,17 +87,92 @@ class NewsAnalyzer:
             logger.error(f"⚠️ Ошибка парсинга JSON: {e}. Текст: {text[:50]}...")
             return None
 
-    async def _analyze_with_openai(self, prompt: str) -> Optional[Dict]:
-        """Резервный анализ через OpenAI"""
-        if not self.openai_client:
-            logger.error("❌ OpenAI не настроен, но был вызван как fallback")
+    async def _rate_limit_wait_gemini(self):
+        """Ожидание для соблюдения Gemini rate limiting (4.5 сек)"""
+        import time
+        current_time = time.time()
+        time_since_last_call = current_time - self._last_gemini_call_time
+        
+        if time_since_last_call < self._gemini_delay_seconds:
+            wait_time = self._gemini_delay_seconds - time_since_last_call
+            await asyncio.sleep(wait_time)
+        
+        self._last_gemini_call_time = time.time()
+
+    async def _rate_limit_wait_mistral(self):
+        """Ожидание для соблюдения Mistral rate limiting (1.1 сек)"""
+        import time
+        current_time = time.time()
+        time_since_last_call = current_time - self._last_mistral_call_time
+        
+        if time_since_last_call < self._mistral_delay_seconds:
+            wait_time = self._mistral_delay_seconds - time_since_last_call
+            await asyncio.sleep(wait_time)
+        
+        self._last_mistral_call_time = time.time()
+
+    async def _rate_limit_wait_openai(self):
+        """Ожидание для соблюдения OpenAI rate limiting (1 сек)"""
+        import time
+        current_time = time.time()
+        time_since_last_call = current_time - self._last_openai_call_time
+        
+        if time_since_last_call < self._openai_delay_seconds:
+            wait_time = self._openai_delay_seconds - time_since_last_call
+            await asyncio.sleep(wait_time)
+        
+        self._last_openai_call_time = time.time()
+
+    async def _analyze_with_mistral(self, prompt: str) -> Optional[Dict]:
+        """Анализ через Mistral AI (Fallback #1)"""
+        if not self.mistral_client:
             return None
 
-        # Rate limiting для OpenAI тоже
-        await self._rate_limit_wait()
+        # Rate limiting для Mistral
+        await self._rate_limit_wait_mistral()
 
         try:
-            logger.info("🤖 Переключаюсь на OpenAI (Fallback)...")
+            logger.info("🔮 Переключаюсь на Mistral AI (Fallback #1)...")
+            # Mistral использует синхронный API, оборачиваем в executor
+            def _generate():
+                response = self.mistral_client.chat.complete(
+                    model="mistral-large-latest",  # Лучшая модель для анализа
+                    messages=[
+                        {"role": "system", "content": "You are a crypto news editor. Output only valid JSON."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    response_format={"type": "json_object"}
+                )
+                return response.choices[0].message.content
+            
+            response_text = await asyncio.wait_for(
+                asyncio.to_thread(_generate),
+                timeout=20.0
+            )
+            
+            if response_text:
+                result = self._clean_json_response(response_text)
+                if result:
+                    return result
+                logger.warning("⚠️ Mistral вернул некорректный JSON")
+        except Exception as e:
+            error_str = str(e)
+            if '429' in error_str or 'rate limit' in error_str.lower():
+                logger.error(f"❌ Mistral Error: Превышен rate limit. Fallback на OpenAI...")
+            else:
+                logger.error(f"❌ Mistral Error: {e}")
+            return None
+
+    async def _analyze_with_openai(self, prompt: str) -> Optional[Dict]:
+        """Резервный анализ через OpenAI (Fallback #2)"""
+        if not self.openai_client:
+            return None
+
+        # Rate limiting для OpenAI
+        await self._rate_limit_wait_openai()
+
+        try:
+            logger.info("🤖 Переключаюсь на OpenAI (Fallback #2)...")
             response = await self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",  # Дешевая и умная модель
                 messages=[
@@ -82,7 +180,7 @@ class NewsAnalyzer:
                     {"role": "user", "content": prompt}
                 ],
                 response_format={"type": "json_object"},  # Гарантирует JSON
-                timeout=15
+                timeout=10  # ✅ ИСПРАВЛЕНО: Уменьшен таймаут с 15 до 10 секунд
             )
             content = response.choices[0].message.content
             return json.loads(content)
@@ -90,24 +188,23 @@ class NewsAnalyzer:
             logger.error(f"❌ OpenAI Error: {e}")
             return None
 
-    async def _rate_limit_wait(self):
-        """Ожидание для соблюдения rate limiting"""
-        import time
-        current_time = time.time()
-        time_since_last_call = current_time - self._last_api_call_time
-        
-        if time_since_last_call < self._min_delay_seconds:
-            wait_time = self._min_delay_seconds - time_since_last_call
-            await asyncio.sleep(wait_time)
-        
-        self._last_api_call_time = time.time()
-
     async def analyze_text(self, text: str, context: str = "news") -> Optional[Dict]:
-        """Универсальный метод анализа с улучшенным промптом"""
-        
-        # Rate limiting: задержка между запросами
-        await self._rate_limit_wait()
-
+        """
+        Универсальный метод анализа с улучшенным промптом.
+        ✅ ИСПРАВЛЕНО: Добавлен общий таймаут 30 секунд для всей операции.
+        """
+        # ✅ ИСПРАВЛЕНО: Общий таймаут для всей операции анализа (30 секунд)
+        try:
+            return await asyncio.wait_for(
+                self._analyze_text_internal(text, context),
+                timeout=30.0
+            )
+        except asyncio.TimeoutError:
+            logger.error("❌ AI анализ превысил общий таймаут (30 секунд)")
+            return None
+    
+    async def _analyze_text_internal(self, text: str, context: str = "news") -> Optional[Dict]:
+        """Внутренний метод анализа (без общего таймаута, используется внутри analyze_text)"""
         prompt = f"""Ты эксперт-аналитик криптовалютного рынка с 10+ летним опытом.
 
 ВХОДНАЯ НОВОСТЬ:
@@ -147,9 +244,12 @@ class NewsAnalyzer:
     "market_impact": "High|Medium|Low"
 }}"""
 
-        # 1. Попытка через Gemini (новый API google.genai)
+        # 1. Попытка через Gemini (новый API google.genai) - ОСНОВНОЙ
         if self.client and self.model_name:
             try:
+                # Rate limiting для Gemini (4.5 сек)
+                await self._rate_limit_wait_gemini()
+                
                 # Используем правильный формат для нового API google.genai
                 # Синхронный вызов через asyncio.to_thread
                 def _generate():
@@ -158,9 +258,10 @@ class NewsAnalyzer:
                         contents=prompt
                     )
                 
+                # ✅ ИСПРАВЛЕНО: Уменьшен таймаут с 20 до 15 секунд
                 response = await asyncio.wait_for(
                     asyncio.to_thread(_generate),
-                    timeout=20.0
+                    timeout=15.0
                 )
 
                 # Извлекаем текст из ответа (пробуем разные способы)
@@ -194,12 +295,20 @@ class NewsAnalyzer:
                 elif '429' in error_str or 'RESOURCE_EXHAUSTED' in error_str:
                     logger.error(f"❌ Gemini Error: Превышена квота API. Fallback на OpenAI...")
                 else:
-                    logger.error(f"❌ Gemini Error: {e}")
-                # Fallback на OpenAI произойдет автоматически ниже
+                    logger.error(f"❌ Gemini Error: {e}. Fallback на OpenAI...")
+                # Fallback на Mistral произойдет автоматически ниже
 
-        # 2. Попытка через OpenAI (если Gemini упал или не настроен)
+        # 2. Попытка через Mistral AI (Fallback #1) - ВРЕМЕННО ОТКЛЮЧЕН
+        # if self.mistral_client:
+        #     result = await self._analyze_with_mistral(prompt)
+        #     if result:
+        #         return result
+
+        # 3. Попытка через OpenAI (Fallback #2) - последний резерв
         if self.openai_client:
-            return await self._analyze_with_openai(prompt)
+            result = await self._analyze_with_openai(prompt)
+            if result:
+                return result
 
         return None
 

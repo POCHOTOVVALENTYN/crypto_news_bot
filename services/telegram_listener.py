@@ -18,6 +18,8 @@ class TelegramListener:
         self.ai = NewsAnalyzer()
         self.source_channels = SOURCE_CHANNELS if isinstance(SOURCE_CHANNELS, list) else []
         self.is_running = False
+        # ✅ ИСПРАВЛЕНО: Семафор для ограничения параллельной обработки Userbot новостей (максимум 3 одновременно)
+        self.processing_semaphore = asyncio.Semaphore(3)
 
     async def start(self):
         """Запуск прослушки (только если есть сессия)"""
@@ -95,46 +97,61 @@ class TelegramListener:
             logger.error(f"❌ Критическая ошибка Userbot: {e}", exc_info=True)
 
     async def handle_new_message(self, event):
-        """Обработка сообщения"""
-        try:
-            raw_text = event.message.text
-            if not raw_text or len(raw_text) < 20: return
-
-            chat = await event.get_chat()
-            source_title = getattr(chat, 'title', getattr(chat, 'first_name', 'Unknown'))
-
-            # --- ПРЕ-ФИЛЬТРЫ ---
-            STOP_WORDS = ["giveaway", "promo", "discount", "sign up"]
-            if any(w in raw_text.lower() for w in STOP_WORDS): return
-            # -------------------
-
-            logger.info(f"⚡️ Поймано из {source_title}: {raw_text[:30]}...")
-
-            msg_unique_id = f"tg_{event.chat_id}_{event.message.id}"
-            if await db.news_exists(msg_unique_id): return
-
-            # Отправка в ИИ
-            processed = await self.ai.process_incoming_news(raw_text)
-
-            if processed:
-                title = processed['ru_title']
-                if await db.is_duplicate_by_content(title, threshold=85):
-                    logger.info(f"♻️ Дубликат пропущен: {title}")
+        """
+        Обработка сообщения.
+        ✅ ИСПРАВЛЕНО: Добавлен семафор для ограничения параллельной обработки.
+        """
+        # ✅ ИСПРАВЛЕНО: Ограничиваем параллельную обработку через семафор
+        async with self.processing_semaphore:
+            try:
+                raw_text = event.message.text
+                if not raw_text or len(raw_text) < 20: 
                     return
 
-                logger.info(f"💎 ИНСАЙД: {title}")
-                await db.add_news(
-                    url=msg_unique_id,
-                    title=title,
-                    summary=processed['ru_summary'],
-                    source=f"⚡ Insider ({source_title})",
-                    published_at="Just now",
-                    image_url=None,
-                    priority=10  # Максимальный приоритет для Insider новостей
-                )
+                chat = await event.get_chat()
+                source_title = getattr(chat, 'title', getattr(chat, 'first_name', 'Unknown'))
 
-        except Exception as e:
-            logger.error(f"Ошибка в handle_new_message: {e}")
+                # --- ПРЕ-ФИЛЬТРЫ ---
+                STOP_WORDS = ["giveaway", "promo", "discount", "sign up"]
+                if any(w in raw_text.lower() for w in STOP_WORDS): 
+                    return
+                # -------------------
+
+                logger.info(f"⚡️ Поймано из {source_title}: {raw_text[:30]}...")
+
+                msg_unique_id = f"tg_{event.chat_id}_{event.message.id}"
+                if await db.news_exists(msg_unique_id): 
+                    return
+
+                # ✅ ИСПРАВЛЕНО: Добавлен таймаут для AI анализа (30 секунд)
+                try:
+                    processed = await asyncio.wait_for(
+                        self.ai.process_incoming_news(raw_text),
+                        timeout=30.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"⏱️ AI анализ Userbot новости превысил таймаут (30 секунд), пропускаем")
+                    return
+
+                if processed:
+                    title = processed['ru_title']
+                    if await db.is_duplicate_by_content(title, threshold=85):
+                        logger.info(f"♻️ Дубликат пропущен: {title}")
+                        return
+
+                    logger.info(f"💎 ИНСАЙД: {title}")
+                    await db.add_news(
+                        url=msg_unique_id,
+                        title=title,
+                        summary=processed['ru_summary'],
+                        source=f"⚡ Insider ({source_title})",
+                        published_at="Just now",
+                        image_url=None,
+                        priority=10  # Максимальный приоритет для Insider новостей
+                    )
+
+            except Exception as e:
+                logger.error(f"Ошибка в handle_new_message: {e}", exc_info=True)
 
     async def stop(self):
         if self.client and self.is_running:

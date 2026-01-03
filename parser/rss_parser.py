@@ -3,8 +3,11 @@ import feedparser
 import aiohttp
 import asyncio
 import re
+import logging
 from typing import List, Dict
 from html import unescape
+
+logger = logging.getLogger(__name__)
 
 # ✅ ОСТАВЛЯЕМ ТОЛЬКО РАБОЧИЕ
 RSS_FEEDS = {
@@ -221,16 +224,37 @@ class RSSParser:
                 title = entry.get("title", "No title")
                 link = entry.get("link", "")
                 published = entry.get("published", "")
+                
+                # ✅ ИСПРАВЛЕНО: Извлекаем полный текст статьи (комбинированный подход)
+                from parser.article_extractor import get_article_content
+                
+                # Для асинхронного вызова (get_article_content - async)
+                full_content = await get_article_content(entry, link)
+                
+                # ✅ ИСПРАВЛЕНО: Логируем результат извлечения контента
+                if full_content and len(full_content) > 500:
+                    logger.debug(f"✅ Полный текст извлечен для {title[:50]}: {len(full_content)} символов")
+                elif full_content and len(full_content) > 200:
+                    logger.debug(f"⚠️ Короткий контент для {title[:50]}: {len(full_content)} символов (использован summary?)")
+                else:
+                    logger.debug(f"⚠️ Очень короткий контент для {title[:50]}: {len(full_content) if full_content else 0} символов")
+                
+                # Используем full_content если доступен, иначе summary
                 summary = entry.get("summary", "")
-
-                summary = clean_html(summary)
-                summary = remove_source_mentions(summary)
-
-                # Проверка релевантности
-                if not self._is_relevant(title, summary):
+                if not full_content and summary:
+                    summary = clean_html(summary)
+                    summary = remove_source_mentions(summary)
+                    full_content = summary
+                
+                # Если full_content пустой, используем title как fallback
+                if not full_content:
+                    full_content = title
+                
+                # Проверка релевантности (используем full_content для проверки)
+                if not self._is_relevant(title, full_content):
                     continue
 
-                lang = self._detect_language(title + " " + summary)
+                lang = self._detect_language(title + " " + full_content)
                 image_url = self._extract_image_from_entry(entry)
 
                 all_news.append({
@@ -238,7 +262,8 @@ class RSSParser:
                     "link": link,
                     "source": source_name,
                     "published": published,
-                    "summary": summary,
+                    "summary": summary,  # Оставляем для обратной совместимости
+                    "full_content": full_content,  # ✅ НОВОЕ: Полный текст статьи
                     "language": lang,
                     "image_url": image_url,
                     "raw_entry": entry,

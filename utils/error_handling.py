@@ -75,13 +75,14 @@ def critical_error_handler(func):
             # Тут можно добавить логику перезапуска или остановки
     return wrapper
 
-def safe_task(task_name=None):
+def safe_task(task_name=None, timeout_seconds=None):
     """
     Декоратор для защиты фоновых задач.
     Ловит исключения, чтобы они не ломали Event Loop.
+    Поддерживает таймаут для предотвращения зависаний.
     
     Использование:
-        @safe_task("Task Name")
+        @safe_task("Task Name", timeout_seconds=300)
         async def my_task():
             ...
     """
@@ -89,7 +90,27 @@ def safe_task(task_name=None):
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             try:
-                return await func(*args, **kwargs)
+                if timeout_seconds:
+                    # ✅ НОВОЕ: Добавляем таймаут для предотвращения зависаний
+                    return await asyncio.wait_for(
+                        func(*args, **kwargs),
+                        timeout=timeout_seconds
+                    )
+                else:
+                    return await func(*args, **kwargs)
+            except asyncio.TimeoutError:
+                task_display = task_name or func.__name__
+                error_msg = f"⏱️ Задача '{task_display}' превысила таймаут ({timeout_seconds}с) и была прервана"
+                logger.critical(error_msg)
+                if hasattr(alert_manager, 'send_alert'):
+                    try:
+                        await alert_manager.send_alert(
+                            error_msg,
+                            level="CRITICAL"
+                        )
+                    except Exception as alert_error:
+                        logger.error(f"❌ Не удалось отправить алерт: {alert_error}")
+                return None
             except asyncio.CancelledError:
                 pass  # Обычная остановка задачи
             except Exception as e:
