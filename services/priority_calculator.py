@@ -178,3 +178,4 @@ class PriorityCalculator:
         # Во всех остальных случаях нужен AI
         return True
 
+

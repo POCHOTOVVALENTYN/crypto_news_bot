@@ -144,3 +144,4 @@ if not NewsValidator.is_today_news(news):  # Только сегодня
 
 *Все изменения внесены в код!*
 *Дата: $(date)*
+

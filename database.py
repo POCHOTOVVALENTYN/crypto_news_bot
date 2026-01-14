@@ -52,7 +52,20 @@ class NewsDatabase:
                              ON news(priority DESC, posted_to_telegram, id ASC)
                              """)
             
+            # Таблица настроек (key-value store)
+            await db.execute("""
+                             CREATE TABLE IF NOT EXISTS settings
+                             (
+                                 key   TEXT PRIMARY KEY,
+                                 value TEXT
+                             )
+                             """)
+            
             await db.commit()
+
+    async def close(self):
+        """Закрывает соединение с БД (для совместимости, так как используем контекстные менеджеры)"""
+        pass
 
     async def execute(self, query: str, args=()):
         """Выполняет SQL запрос и возвращает результат (для статистики)"""
@@ -64,6 +77,44 @@ class NewsDatabase:
                     return row[0] if row else 0
                 # Иначе возвращаем все строки
                 return await cursor.fetchall()
+
+    async def get_setting(self, key: str, default: str = None) -> Optional[str]:
+        """Получает значение настройки по ключу"""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else default
+
+    async def set_setting(self, key: str, value: str):
+        """Сохраняет значение настройки"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
+                (key, value, value)
+            )
+            await db.commit()
+
+    async def get_statistics(self) -> Dict:
+        """Получает статистику по базе данных"""
+        stats = {}
+        async with aiosqlite.connect(self.db_path) as db:
+            # Всего новостей
+            async with db.execute("SELECT COUNT(*) FROM news") as cursor:
+                stats['total_news'] = (await cursor.fetchone())[0]
+            
+            # Опубликовано в Telegram
+            async with db.execute("SELECT COUNT(*) FROM news WHERE posted_to_telegram = 1") as cursor:
+                stats['posted_count'] = (await cursor.fetchone())[0]
+                
+            # В очереди (не опубликовано)
+            async with db.execute("SELECT COUNT(*) FROM news WHERE posted_to_telegram = 0") as cursor:
+                stats['queue_count'] = (await cursor.fetchone())[0]
+                
+            # Сегодняшние новости
+            async with db.execute("SELECT COUNT(*) FROM news WHERE date(added_at) = date('now')") as cursor:
+                stats['today_count'] = (await cursor.fetchone())[0]
+                
+        return stats
 
 
     async def news_exists(self, url: str) -> bool:

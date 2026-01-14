@@ -6,6 +6,7 @@ import random
 from typing import Optional, Dict, List
 from functools import lru_cache
 import asyncio
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ def async_lru_cache(maxsize=128, ttl=300):
                         del cache_times[key]
 
             # Выполняем функцию
-            logger.debug(f"❌ Cache MISS: {func.__name__}")
+            # logger.debug(f"❌ Cache MISS: {func.__name__}")
             result = await func(*args, **kwargs)
 
             lock = get_lock()
@@ -65,34 +66,32 @@ def async_lru_cache(maxsize=128, ttl=300):
 
 # === ТРЕКЕР ЦЕН (С КЭШИРОВАНИЕМ) ===
 @async_lru_cache(maxsize=1, ttl=300)  # 5 минут кэш, 1 запись
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2), 
+       retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)))
 async def get_multiple_crypto_prices() -> Optional[Dict]:
     """Получает цены BTC, ETH, SOL с автоматическим кэшированием"""
-    try:
-        url = "https://api.coingecko.com/api/v3/simple/price"
-        params = {
-            "ids": "bitcoin,ethereum,solana",
-            "vs_currencies": "usd",
-            "include_24hr_change": "true"
-        }
+    # Удаляем try/except чтобы tenacity ловила ошибки
+    url = "https://api.coingecko.com/api/v3/simple/price"
+    params = {
+        "ids": "bitcoin,ethereum,solana",
+        "vs_currencies": "usd",
+        "include_24hr_change": "true"
+    }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=10) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    prices = {}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, params=params, timeout=10) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                prices = {}
 
-                    for coin in ["bitcoin", "ethereum", "solana"]:
-                        if coin in data:
-                            prices[coin] = {
-                                "price": data[coin]["usd"],
-                                "change": data[coin].get("usd_24h_change", 0)
-                            }
+                for coin in ["bitcoin", "ethereum", "solana"]:
+                    if coin in data:
+                        prices[coin] = {
+                            "price": data[coin]["usd"],
+                            "change": data[coin].get("usd_24h_change", 0)
+                        }
 
-                    return prices
-
-    except Exception as e:
-        logger.error(f"Ошибка получения цен: {e}")
-
+                return prices
     return None
 
 
@@ -126,35 +125,32 @@ class CryptoMultiPriceTracker:
 class FearGreedIndexTracker:
     @staticmethod
     @async_lru_cache(maxsize=1, ttl=3600)  # 1 час кэш
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), 
+           retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)))
     async def get_fear_greed_index() -> Optional[Dict]:
         """Получает индекс страха с автоматическим кэшированием"""
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get("https://api.alternative.me/fng/", timeout=10) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        if data.get("data"):
-                            item = data["data"][0]
-                            result = {
-                                "value": int(item["value"]),
-                                "label": item["value_classification"]
-                            }
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://api.alternative.me/fng/", timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("data"):
+                        item = data["data"][0]
+                        result = {
+                            "value": int(item["value"]),
+                            "label": item["value_classification"]
+                        }
 
-                            # Перевод
-                            translations = {
-                                "Extreme Fear": "Экстремальный страх",
-                                "Fear": "Страх",
-                                "Neutral": "Нейтрально",
-                                "Greed": "Жадность",
-                                "Extreme Greed": "Экстремальная жадность"
-                            }
-                            result["label"] = translations.get(result["label"], result["label"])
+                        # Перевод
+                        translations = {
+                            "Extreme Fear": "Экстремальный страх",
+                            "Fear": "Страх",
+                            "Neutral": "Нейтрально",
+                            "Greed": "Жадность",
+                            "Extreme Greed": "Экстремальная жадность"
+                        }
+                        result["label"] = translations.get(result["label"], result["label"])
 
-                            return result
-
-        except Exception as e:
-            logger.error(f"Ошибка индекса страха: {e}")
-
+                        return result
         return None
 
 
@@ -213,17 +209,6 @@ class AdvancedMessageFormatter:
         text = re.sub(r'\s+', ' ', text).strip()
         return text
     
-    @staticmethod
-    def translate_sentiment(sentiment: str) -> str:
-        """Переводит sentiment на русский язык"""
-        translations = {
-            "Extreme Bullish": "Экстремально бычий",
-            "Bullish": "Бычий",
-            "Neutral": "Нейтральный",
-            "Bearish": "Медвежий",
-            "Extreme Bearish": "Экстремально медвежий"
-        }
-        return translations.get(sentiment, sentiment)
     
     @staticmethod
     def insert_random_link(text: str, url: str) -> str:
@@ -305,20 +290,20 @@ class AdvancedMessageFormatter:
             ai_data: Optional[Dict] = None,
             technical_analysis: Optional[Dict] = None,
             key_points: Optional[List[str]] = None,
-            full_content: Optional[str] = None
+            full_content: Optional[str] = None,
+            footer_template: Optional[str] = None
     ) -> Dict:
 
+        # Инициализируем переменные для шаблона (на будущее)
+        prices_text = ""
+        fear_text = ""
+
         # Заголовок
-        sentiment_emoji = "🔔"
+        # ✅ НОВОЕ: Используем яркие эмодзи (стандартные, но анимированные в Telegram)
+        coin_emoji = "💎" 
         coin_tag = ""
 
         if ai_data:
-            sent = ai_data.get("sentiment", "Neutral")
-            if "Bullish" in sent:
-                sentiment_emoji = "🟢"
-            elif "Bearish" in sent:
-                sentiment_emoji = "🔴"
-
             coin = ai_data.get("coin", "Market")
             if coin and coin != "Market":
                 coin_tag = f"#{coin}"
@@ -328,78 +313,81 @@ class AdvancedMessageFormatter:
         if not image_url:
             image_url = AdvancedMessageFormatter.COIN_IMAGES["General"]
 
-        # ✅ ИСПРАВЛЕНО: Увеличиваем лимит заголовка (или убираем обрезку для более полного отображения)
-        # Убираем обрезку заголовка для более полного отображения
-        title_display = title  # Не обрезаем заголовок
-        
-        # ✅ НОВОЕ: Рандомно вставляем ссылку в заголовок
+        # ✅ НОВОЕ: Улучшенный заголовок с эмодзи
+        title_display = title
         title_with_link = AdvancedMessageFormatter.insert_random_link(title_display, source_url)
-        header = f"{sentiment_emoji} <b>{title_with_link}</b> {coin_tag}\n\n"
-
-        # ✅ НОВОЕ: Контент с ключевыми моментами (bullet points)
-        content_section = ""
         
-        if key_points and len(key_points) > 0:
-            # Используем ключевые моменты для bullet points
-            content_section = "📝 <b>Ключевые моменты:</b>\n"
-            for point in key_points[:3]:  # Максимум 3 пункта
-                # ✅ ИСПРАВЛЕНО: Убираем обрезку ключевых моментов для более полного отображения
-                point_clean = AdvancedMessageFormatter.clean_text(point)
-                point_display = point_clean  # Не обрезаем ключевые моменты
-                # ✅ ИСПРАВЛЕНО: Убрали ссылку из ключевых моментов (оставляем только в заголовке)
-                
-                content_section += f"• {point_display}\n"
-            content_section += "\n"
-        elif full_content:
-            # Если нет key_points, используем выжимку из full_content
+        # 🔥 - горячие новости, ⚡️ - обычные
+        header_emoji = "🔥" 
+        header = f"{header_emoji} <b>{title_with_link}</b> {coin_tag}\n\n"
+
+        # ✅ НОВОЕ: Контент (полный текст или summary)
+        content_section = ""
+
+        if full_content:
+            # Если есть full_content, используем выжимку из него
             from services.content_summarizer import ContentSummarizer
             try:
                 summary_text = ContentSummarizer.create_extractive_summary(full_content, sentences_count=3)
                 if summary_text:
                     content_section = AdvancedMessageFormatter.clean_text(summary_text)
-                    content_section = AdvancedMessageFormatter.smart_truncate(content_section, length=400)
+                    content_section = AdvancedMessageFormatter.smart_truncate(content_section, length=600)
                     content_section += "\n\n"
             except Exception:
-                # Fallback на summary
                 pass
         
-        # Если content_section пустой, используем summary
+        # Если content_section все еще пустой, используем обычное summary
         if not content_section:
             summary_clean = AdvancedMessageFormatter.clean_text(summary)
-            content_section = AdvancedMessageFormatter.smart_truncate(summary_clean, length=400)
+            content_section = AdvancedMessageFormatter.smart_truncate(summary_clean, length=600)
             content_section += "\n\n"
 
         # Футер
         footer = ""
         
-        # ✅ ИСПРАВЛЕНО: Настроение (sentiment) на русском
-        # Проверяем наличие ai_data и sentiment более тщательно
-        if ai_data:
-            sentiment = ai_data.get("sentiment")
-            if sentiment:  # Проверяем, что sentiment не пустой
-                sentiment_ru = AdvancedMessageFormatter.translate_sentiment(sentiment)
-                footer += f"📊 <b>Настроение:</b> {sentiment_ru}\n"
-        
-        # Индекс страха
+        # 1. Индекс страха (с отступом после него)
         if fear_greed:
-            footer += f"😱 <b>Индекс страха:</b> {fear_greed['value']}/100\n"
-        
-        # ✅ ИСПРАВЛЕНО: Убрали разделитель после индекса страха
-        
-        # ✅ ИСПРАВЛЕНО: Цены (каждая монета с новой строки + изменение за 24ч)
+            # Используем разные эмодзи для разных состояний страха
+            fear_val = fear_greed['value']
+            fear_emoji = "😰" if fear_val < 30 else ("🤑" if fear_val > 70 else "⚖️")
+            footer += f"{fear_emoji} <b>Индекс страха:</b> {fear_val}/100\n\n"
+        else:
+            footer += "\n" 
+
         if prices:
+            lines = []
             if "bitcoin" in prices:
-                change_24h = prices['bitcoin'].get('change', 0)
-                change_emoji = "📈" if change_24h >= 0 else "📉"
-                footer += f"{change_emoji} BTC: ${prices['bitcoin']['price']:,.0f} ({change_24h:+.2f}%)\n"
+                p = prices['bitcoin']
+                emoji = "🚀" if p.get('change', 0) >= 0 else "🩸"
+                price_line = f"{emoji} BTC: <b>${p['price']:,.0f}</b> ({p['change']:+.2f}%)"
+                prices_text += price_line + "\n"
+                lines.append(price_line)
+            
             if "ethereum" in prices:
-                change_24h = prices['ethereum'].get('change', 0)
-                change_emoji = "📈" if change_24h >= 0 else "📉"
-                footer += f"{change_emoji} ETH: ${prices['ethereum']['price']:,.0f} ({change_24h:+.2f}%)\n"
+                p = prices['ethereum']
+                emoji = "🚀" if p.get('change', 0) >= 0 else "🩸"
+                price_line = f"{emoji} ETH: <b>${p['price']:,.0f}</b> ({p['change']:+.2f}%)"
+                prices_text += price_line + "\n"
+                lines.append(price_line)
+            
             if "solana" in prices:
-                change_24h = prices['solana'].get('change', 0)
-                change_emoji = "📈" if change_24h >= 0 else "📉"
-                footer += f"{change_emoji} SOL: ${prices['solana']['price']:.2f} ({change_24h:+.2f}%)\n"
+                p = prices['solana']
+                emoji = "🚀" if p.get('change', 0) >= 0 else "🩸"
+                price_line = f"{emoji} SOL: <b>${p['price']:.2f}</b> ({p['change']:+.2f}%)"
+                prices_text += price_line + "\n"
+                lines.append(price_line)
+            
+            if lines:
+                footer += "\n".join(lines) + "\n"
+
+        # 4. Кастомный футер (шаблон)
+        if footer_template:
+             # Простая подстановка
+             # Можно расширить до .format(**vars), но пока просто добавляем
+             # Если в шаблоне есть {prices}, {sentiment}, {fear} - можно было бы заменять, 
+             # но сейчас логика выше уже сформировала стандартный футер.
+             # По ТЗ "Настроить шаблон окончания публикации" - вероятно, это подпись канала.
+             footer += f"\n{footer_template}"
 
         # Сборка сообщения
         text = f"{header}{content_section}{footer}"

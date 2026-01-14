@@ -1,0 +1,12 @@
+services:
+  bot:
+    build: .
+    container_name: crypto_news_bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./crypto_news.db:/app/crypto_news.db
+      - ./logs:/app/logs
+      - ./anon_session.session:/app/anon_session.session
+    environment:
+      - TZ=Europe/Kyiv

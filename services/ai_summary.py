@@ -214,9 +214,8 @@ class NewsAnalyzer:
 1. Определить КРИТИЧЕСКУЮ ВАЖНОСТЬ новости (0-10)
 2. Создать цепляющий заголовок на русском (до 10 слов)
 3. Написать краткое описание (2-3 предложения, только суть)
-4. Определить тональность (Extreme Bullish / Bullish / Neutral / Bearish / Extreme Bearish)
-5. Указать монету (BTC, ETH, SOL, или Market)
-6. Оценить влияние на рынок (High / Medium / Low)
+4. Указать монету (BTC, ETH, SOL, или Market)
+5. Оценить влияние на рынок (High / Medium / Low)
 
 КРИТЕРИИ ВАЖНОСТИ:
 - 10 (Critical): Взломы, банкротства, критические регуляторные решения
@@ -230,7 +229,6 @@ class NewsAnalyzer:
 ВАЖНО:
 - Заголовок должен быть информативным и цепляющим
 - Описание - только ключевая информация, без воды
-- Тональность должна отражать возможное влияние на цену
 - Если новость не относится к крипто - верни importance: "Low"
 
 ФОРМАТ ОТВЕТА (только JSON, без Markdown):
@@ -239,7 +237,6 @@ class NewsAnalyzer:
     "importance_score": 10,
     "ru_title": "...",
     "ru_summary": "...",
-    "sentiment": "Bullish|Bearish|Neutral|Extreme Bullish|Extreme Bearish",
     "coin": "BTC|ETH|SOL|Market",
     "market_impact": "High|Medium|Low"
 }}"""
@@ -251,40 +248,44 @@ class NewsAnalyzer:
                 await self._rate_limit_wait_gemini()
                 
                 # Используем правильный формат для нового API google.genai
-                # Синхронный вызов через asyncio.to_thread
-                def _generate():
-                    return self.client.models.generate_content(
-                        model=self.model_name,
-                        contents=prompt
-                    )
-                
+                # Асинхронный вызов через client.aio
                 # ✅ ИСПРАВЛЕНО: Уменьшен таймаут с 20 до 15 секунд
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(_generate),
-                    timeout=15.0
-                )
+                try:
+                    response = await asyncio.wait_for(
+                        self.client.aio.models.generate_content(
+                            model=self.model_name,
+                            contents=prompt
+                        ),
+                        timeout=15.0
+                    )
 
-                # Извлекаем текст из ответа (пробуем разные способы)
-                response_text = None
-                if hasattr(response, 'text'):
-                    response_text = response.text
-                elif hasattr(response, 'candidates') and response.candidates:
-                    # Альтернативный способ извлечения текста
-                    candidate = response.candidates[0]
-                    if hasattr(candidate, 'content'):
-                        content = candidate.content
-                        if hasattr(content, 'parts') and content.parts:
-                            first_part = content.parts[0]
-                            if hasattr(first_part, 'text'):
-                                response_text = first_part.text
-                
-                if response_text:
-                    result = self._clean_json_response(response_text)
-                    if result:
-                        return result
-                    logger.warning("⚠️ Gemini вернул некорректный JSON")
-                else:
-                    logger.warning(f"⚠️ Gemini вернул пустой ответ. Response type: {type(response)}")
+                    # Извлекаем текст из ответа (пробуем разные способы)
+                    response_text = None
+                    if hasattr(response, 'text'):
+                        response_text = response.text
+                    elif hasattr(response, 'candidates') and response.candidates:
+                        # Альтернативный способ извлечения текста
+                        candidate = response.candidates[0]
+                        if hasattr(candidate, 'content'):
+                            content = candidate.content
+                            if hasattr(content, 'parts') and content.parts:
+                                first_part = content.parts[0]
+                                if hasattr(first_part, 'text'):
+                                    response_text = first_part.text
+                    
+                    if response_text:
+                        result = self._clean_json_response(response_text)
+                        if result:
+                            # Добавляем инфу об использованной модели
+                            result['model_used'] = 'gemini' 
+                            return result
+                        logger.warning("⚠️ Gemini вернул некорректный JSON")
+                    else:
+                        logger.warning(f"⚠️ Gemini вернул пустой ответ. Response type: {type(response)}")
+
+                except asyncio.TimeoutError:
+                     logger.error(f"❌ Gemini Timeout (15s)")
+                     raise # Fallback to next provider
 
             except Exception as e:
                 error_str = str(e)
@@ -308,12 +309,30 @@ class NewsAnalyzer:
         if self.openai_client:
             result = await self._analyze_with_openai(prompt)
             if result:
+                result['model_used'] = 'openai'
                 return result
 
         return None
 
     async def process_incoming_news(self, raw_text: str) -> Optional[Dict]:
         """Для Telegram Listener - фильтрует только важные новости"""
+        
+        # ✅ ОПТИМИЗАЦИЯ: Предварительная проверка через PriorityCalculator
+        # Чтобы не тратить токены на мусор
+        from services.priority_calculator import PriorityCalculator
+        
+        # Создаем временный объект новости
+        temp_news = {
+            'title': raw_text[:100], # Берем начало как заголовок
+            'summary': raw_text[100:] if len(raw_text) > 100 else '',
+            'source': 'Userbot'
+        }
+        
+        # Проверяем, нужен ли AI анализ
+        if not PriorityCalculator.needs_ai_processing(temp_news):
+            return None
+
+        # Если прошел фильтр - анализируем
         result = await self.analyze_text(raw_text)
         if not result:
             return None
@@ -342,7 +361,6 @@ class NewsAnalyzer:
             return {
                 "clean_title": result.get('ru_title', title),
                 "clean_summary": result.get('ru_summary', summary),
-                "coin": result.get('coin'),
-                "sentiment": result.get('sentiment')
+                "coin": result.get('coin')
             }
         return None

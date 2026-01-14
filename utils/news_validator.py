@@ -184,3 +184,4 @@ class NewsValidator:
         
         return True, None
 
+

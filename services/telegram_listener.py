@@ -34,12 +34,19 @@ class TelegramListener:
 
         try:
             # 1. Выбор типа сессии: StringSession (приоритет) или файл
+            import os
+            session_file = 'anon_session.session'
+            
             if TG_SESSION_STRING:
                 logger.info("✅ Использую StringSession из TG_SESSION_STRING")
                 session = StringSession(TG_SESSION_STRING)
-            else:
-                logger.info("📁 Использую файл сессии (рекомендуется использовать TG_SESSION_STRING)")
+            elif os.path.exists(session_file):
+                logger.info(f"📁 Использую найденный файл сессии: {session_file}")
                 session = 'anon_session'
+            else:
+                logger.warning("⚠️ Сессия не найдена (нет TG_SESSION_STRING и файла anon_session.session).")
+                logger.warning("🛑 Userbot будет ВЫКЛЮЧЕН. Запустите auth.py для авторизации.")
+                return
 
             # 2. Инициализация клиента
             self.client = TelegramClient(
