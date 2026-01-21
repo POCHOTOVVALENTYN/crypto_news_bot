@@ -101,6 +101,7 @@ class NewsDatabase:
                                  amount_stars INTEGER NOT NULL,
                                  discount_used BOOLEAN DEFAULT 0,
                                  telegram_payment_charge_id TEXT,
+                                 payment_uuid TEXT UNIQUE,  -- Уникальный UUID для отслеживания
                                  
                                  -- Метрики
                                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -112,6 +113,18 @@ class NewsDatabase:
                                  FOREIGN KEY (user_id) REFERENCES users(user_id)
                              )
                              """)
+            
+            # Миграция: добавляем payment_uuid если его нет
+            try:
+                async with db.execute("PRAGMA table_info(payments)") as cursor:
+                    columns = [row[1] for row in await cursor.fetchall()]
+                    
+                    if 'payment_uuid' not in columns:
+                        await db.execute("ALTER TABLE payments ADD COLUMN payment_uuid TEXT")
+                        await db.commit()
+                        logger.info("✅ Добавлена колонка payment_uuid в таблицу payments")
+            except Exception as e:
+                logger.debug(f"⚠️ Миграция payments: {e}")
             
             # Таблица статистики воронки продаж
             await db.execute("""
@@ -128,6 +141,22 @@ class NewsDatabase:
                                  metadata TEXT,  -- JSON с дополнительными данными
                                  
                                  FOREIGN KEY (user_id) REFERENCES users(user_id)
+                             )
+                             """)
+            
+            # Таблица рефералов
+            await db.execute("""
+                             CREATE TABLE IF NOT EXISTS referrals
+                             (
+                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                 referrer_id INTEGER NOT NULL,
+                                 referred_id INTEGER NOT NULL,
+                                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                 reward_given BOOLEAN DEFAULT 0,
+                                 
+                                 FOREIGN KEY (referrer_id) REFERENCES users(user_id),
+                                 FOREIGN KEY (referred_id) REFERENCES users(user_id),
+                                 UNIQUE(referrer_id, referred_id)
                              )
                              """)
             
@@ -379,17 +408,31 @@ class NewsDatabase:
         return True
     
     async def set_user_field(self, user_id: int, field: str, value):
-        """Обновляет конкретное поле пользователя"""
-        async with aiosqlite.connect(self.db_path) as db:
-            # Для datetime конвертируем в ISO формат
-            if hasattr(value, 'isoformat'):
-                value = value.isoformat()
-            
-            await db.execute(
-                f"UPDATE users SET {field} = ? WHERE user_id = ?",
-                (value, user_id)
-            )
-            await db.commit()
+        """Обновляет конкретное поле пользователя (БЕЗОПАСНО)"""
+        # 🔒 WHITELIST разрешённых полей для защиты от SQL Injection
+        ALLOWED_FIELDS = {
+            'username', 'full_name', 'status', 'subscription_end',
+            'first_offer_shown_at', 'discount_offer_shown_at',
+            'total_purchases', 'lifetime_spent'
+        }
+        
+        if field not in ALLOWED_FIELDS:
+            logger.error(f"❌ Попытка обновить недопустимое поле: {field}")
+            raise ValueError(f"Field '{field}' is not allowed for modification")
+        
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # Для datetime конвертируем в ISO формат
+                if hasattr(value, 'isoformat'):
+                    value = value.isoformat()
+                
+                # Безопасно формируем запрос (field проверен через whitelist)
+                query = f"UPDATE users SET {field} = ? WHERE user_id = ?"
+                await db.execute(query, (value, user_id))
+                await db.commit()
+        except Exception as e:
+            logger.error(f"❌ Ошибка обновления поля {field} для {user_id}: {e}", exc_info=True)
+            raise
     
     async def get_user_statistics(self) -> Dict:
         """Возвращает статистику пользователей"""
@@ -416,48 +459,78 @@ class NewsDatabase:
         import json
         metadata_str = json.dumps(metadata, ensure_ascii=False) if metadata else None
         
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "INSERT INTO funnel_stats (user_id, step, metadata) VALUES (?, ?, ?)",
-                (user_id, step, metadata_str)
-            )
-            await db.commit()
-        logger.debug(f"📊 Funnel: {user_id} -> {step}")
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "INSERT INTO funnel_stats (user_id, step, metadata) VALUES (?, ?, ?)",
+                    (user_id, step, metadata_str)
+                )
+                await db.commit()
+            logger.debug(f"📊 Funnel: {user_id} -> {step}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка отслеживания воронки: {e}", exc_info=True)
     
-    async def create_payment_record(self, user_id: int, amount: int, discount_used: bool):
-        """Создаёт запись платежа"""
-        async with aiosqlite.connect(self.db_path) as db:
-            funnel_step = 'discount_price' if discount_used else 'full_price'
-            await db.execute(
-                """INSERT INTO payments 
-                   (user_id, amount_stars, discount_used, funnel_step, status)
-                   VALUES (?, ?, ?, ?, 'pending')""",
-                (user_id, amount, discount_used, funnel_step)
-            )
-            await db.commit()
+    async def get_pending_payment(self, user_id: int) -> Optional[Dict]:
+        """Проверяет есть ли pending платёж (защита от дублирования)"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT * FROM payments WHERE user_id=? AND status='pending' LIMIT 1",
+                    (user_id,)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"❌ Ошибка проверки pending платежа: {e}", exc_info=True)
+            return None
     
-    async def complete_payment(self, user_id: int, charge_id: str, amount: int):
-        """Подтверждает успешный платёж"""
-        async with aiosqlite.connect(self.db_path) as db:
-            # Обновляем статус платежа
-            await db.execute(
-                """UPDATE payments 
-                   SET status='completed', telegram_payment_charge_id=?
-                   WHERE user_id=? AND amount_stars=? AND status='pending'
-                   ORDER BY created_at DESC LIMIT 1""",
-                (charge_id, user_id, amount)
-            )
-            
-            # Обновляем lifetime_spent и total_purchases пользователя
-            await db.execute(
-                """UPDATE users 
-                   SET total_purchases = total_purchases + 1,
-                       lifetime_spent = lifetime_spent + ?
-                   WHERE user_id = ?""",
-                (amount, user_id)
-            )
-            await db.commit()
-        logger.info(f"💰 Платёж завершён: {user_id} -> {amount}⭐️")
+    async def create_payment_record(self, user_id: int, amount: int, discount_used: bool) -> str:
+        """Создаёт запись платежа и возвращает UUID (защита от Race Condition)"""
+        import uuid
+        payment_uuid = str(uuid.uuid4())
+        
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                funnel_step = 'discount_price' if discount_used else 'full_price'
+                await db.execute(
+                    """INSERT INTO payments 
+                       (user_id, amount_stars, discount_used, funnel_step, status, payment_uuid)
+                       VALUES (?, ?, ?, ?, 'pending', ?)""",
+                    (user_id, amount, discount_used, funnel_step, payment_uuid)
+                )
+                await db.commit()
+            logger.info(f"💳 Payment record created: {payment_uuid} for user {user_id}")
+            return payment_uuid
+        except Exception as e:
+            logger.error(f"❌ Ошибка создания записи платежа: {e}", exc_info=True)
+            raise
+    
+    async def complete_payment(self, payment_uuid: str, charge_id: str, user_id: int, amount: int):
+        """Подтверждает успешный платёж по UUID (безопасно от Race Condition)"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # Обновляем статус платежа по UUID
+                await db.execute(
+                    """UPDATE payments 
+                       SET status='completed', telegram_payment_charge_id=?
+                       WHERE payment_uuid=? AND status='pending'""",
+                    (charge_id, payment_uuid)
+                )
+                
+                # Обновляем lifetime_spent и total_purchases пользователя
+                await db.execute(
+                    """UPDATE users 
+                       SET total_purchases = total_purchases + 1,
+                           lifetime_spent = lifetime_spent + ?
+                       WHERE user_id = ?""",
+                    (amount, user_id)
+                )
+                await db.commit()
+            logger.info(f"💰 Платёж завершён: UUID={payment_uuid}, {user_id} -> {amount}⭐️")
+        except Exception as e:
+            logger.error(f"❌ Ошибка завершения платежа {payment_uuid}: {e}", exc_info=True)
+            raise
     
     async def get_sales_analytics(self) -> Dict:
         """Возвращает подробную аналитику продаж"""
@@ -518,6 +591,85 @@ class NewsDatabase:
                 stats['discount_usage_rate'] = 0
             
             return stats
+
+
+    # === МЕТОДЫ РЕФЕРАЛЬНОЙ СИСТЕМЫ ===
+    
+    async def add_referral(self, referrer_id: int, referred_id: int) -> bool:
+        """Добавляет реферальную связь"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)",
+                    (referrer_id, referred_id)
+                )
+                await db.commit()
+            logger.info(f"📎 Реферал создан: {referrer_id} -> {referred_id}")
+            return True
+        except aiosqlite.IntegrityError:
+            logger.debug(f"Реферал уже существует: {referrer_id} -> {referred_id}")
+            return False
+        except Exception as e:
+            logger.error(f"Ошибка создания реферала: {e}", exc_info=True)
+            return False
+    
+    async def get_referral_count(self, referrer_id: int) -> int:
+        """Возвращает количество рефералов пользователя"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute(
+                    "SELECT COUNT(*) FROM referrals WHERE referrer_id=?",
+                    (referrer_id,)
+                ) as cursor:
+                    return (await cursor.fetchone())[0]
+        except Exception as e:
+            logger.error(f"Ошибка получения количества рефералов: {e}")
+            return 0
+    
+    async def give_referral_bonus(self, referrer_id: int, referred_id: int, bonus_days: int = 7):
+        """Даёт бонус реферреру когда реферал покупает Premium"""
+        from datetime import datetime, timedelta
+        
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # Проверяем не был ли уже выдан бонус
+                async with db.execute(
+                    "SELECT reward_given FROM referrals WHERE referrer_id=? AND referred_id=?",
+                    (referrer_id, referred_id)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if not row or row[0]:
+                        return False  # Бонус уже выдан
+                
+                # Продлеваем подписку реферреру
+                user = await self.get_user(referrer_id)
+                if user and user['status'] == 'premium':
+                    current_end = datetime.fromisoformat(user['subscription_end'])
+                    new_end = current_end + timedelta(days=bonus_days)
+                else:
+                    # Если не премиум - даём новую подписку
+                    new_end = datetime.now() + timedelta(days=bonus_days)
+                
+                await db.execute(
+                    """UPDATE users 
+                       SET subscription_end = ?, status = 'premium'
+                       WHERE user_id = ?""",
+                    (new_end.isoformat(), referrer_id)
+                )
+                
+                # Отмечаем что бонус выдан
+                await db.execute(
+                    "UPDATE referrals SET reward_given=1 WHERE referrer_id=? AND referred_id=?",
+                    (referrer_id, referred_id)
+                )
+                
+                await db.commit()
+            
+            logger.info(f"🎁 Реферальный бонус выдан: {referrer_id} (+{bonus_days} дней)")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка выдачи реферального бонуса: {e}", exc_info=True)
+            return False
 
 
 

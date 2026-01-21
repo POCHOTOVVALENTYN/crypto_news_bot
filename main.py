@@ -36,15 +36,25 @@ from services.scheduler_tasks import (
 # Создаем папку для логов
 Path("logs").mkdir(exist_ok=True)
 
-# Логирование
+# === НАСТРОЙКА ЛОГИРОВАНИЯ ===
 logging.basicConfig(
     level=getattr(logging, config.log_level),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/bot.log', encoding='utf-8'),
-        logging.StreamHandler()
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('logs/bot.log') # Changed from 'bot.log' to 'logs/bot.log' to match original intent
     ]
 )
+
+# 📝 ОТДЕЛЬНЫЙ ЛОГГЕР ДЛЯ ПЛАТЕЖЕЙ (для аудита и безопасности)
+payment_logger = logging.getLogger("payments")
+payment_handler = logging.FileHandler("logs/payments.log")
+payment_handler.setFormatter(
+    logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+)
+payment_logger.addHandler(payment_handler)
+payment_logger.setLevel(logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 # Инициализация
@@ -130,6 +140,13 @@ async def cmd_health(message):
 # Импорт роутеров
 from handlers import admin_menu, user_start, user_menu, payments, ai_chat
 
+# Импорт middleware
+from middlewares.subscription_check import SubscriptionCheckMiddleware
+
+# 🔒 Регистрация middleware (автоматическая проверка подписок)
+dp.message.middleware(SubscriptionCheckMiddleware())
+logger.info("✅ Subscription check middleware зарегистрирован")
+
 # Регистрация роутеров (порядок важен!)
 dp.include_router(admin_menu.router)   # Админ-команды (высший приоритет)
 dp.include_router(user_start.router)   # /start, /help
@@ -212,6 +229,16 @@ async def main():
             id="weekly_digest",
             name="Weekly Digest"
         )
+        
+        # Проверка истекающих подписок каждый день в 10:00
+        from services.subscription_notifier import check_expiring_subscriptions
+        scheduler.add_job(
+            check_expiring_subscriptions,
+            CronTrigger(hour=10, minute=0),
+            id="subscription_check",
+            name="Subscription Expiry Check"
+        )
+        
         scheduler.start()
         logger.info("✅ Планировщик запущен")
 

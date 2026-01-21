@@ -100,19 +100,37 @@ async def initiate_payment(callback: CallbackQuery):
     user_id = callback.from_user.id
     price = int(callback.data.split(":")[1])  # 500 или 400
     
+    # 🔒 ЗАЩИТА ОТ ДУБЛИРОВАНИЯ: Проверяем нет ли уже pending платежа
+    existing_payment = await db.get_pending_payment(user_id)
+    if existing_payment:
+        await callback.answer(
+            "⚠️ У вас уже есть неоплаченный счёт. Завершите его сначала или дождитесь истечения.",
+            show_alert=True
+        )
+        return
+    
     discount_used = (price == config.premium_price_discount)
     
-    # Создаём запись платежа в БД
-    await db.create_payment_record(user_id, price, discount_used)
-    await db.track_funnel(user_id, 'payment_initiated', metadata={'price': price})
+    # Создаём запись платежа в БД и получаем UUID
+    try:
+        payment_uuid = await db.create_payment_record(user_id, price, discount_used)
+    except Exception as e:
+        logger.error(f"Ошибка создания платежа: {e}")
+        await callback.answer(
+            "⚠️ Ошибка создания счёта. Попробуйте позже.",
+            show_alert=True
+        )
+        return
+    
+    await db.track_funnel(user_id, 'payment_initiated', metadata={'price': price, 'uuid': payment_uuid})
     
     try:
-        # Отправляем Invoice (счёт) пользователю
+        # Отправляем Invoice (счёт) пользователю с UUID в payload
         await bot.send_invoice(
             chat_id=user_id,
             title="Premium подписка",
             description=f"Premium-доступ на {config.premium_duration_days} дней к эксклюзивным материалам",
-            payload=f"premium_{config.premium_duration_days}d_{user_id}_{price}",
+            payload=f"premium_{config.premium_duration_days}d_{user_id}_{price}_{payment_uuid}",
             provider_token="",  # Пустая строка для Telegram Stars
             currency="XTR",  # XTR = Telegram Stars
             prices=[LabeledPrice(
@@ -122,7 +140,7 @@ async def initiate_payment(callback: CallbackQuery):
         )
         
         await callback.answer("💳 Счёт отправлен!", show_alert=True)
-        logger.info(f"💰 Invoice отправлен: {user_id} -> {price}⭐️")
+        logger.info(f"💰 Invoice отправлен: {user_id} -> {price}⭐️ (UUID: {payment_uuid})")
         
     except Exception as e:
         logger.error(f"Ошибка отправки invoice: {e}", exc_info=True)
@@ -130,6 +148,7 @@ async def initiate_payment(callback: CallbackQuery):
             "⚠️ Ошибка создания счёта. Попробуйте позже или обратитесь в поддержку.",
             show_alert=True
         )
+
 
 
 # === ШАГ 5: PRE-CHECKOUT (Валидация перед оплатой) ===
@@ -140,10 +159,14 @@ async def process_pre_checkout(pre_checkout: PreCheckoutQuery):
     Telegram вызывает это перед финальной оплатой.
     Здесь можно добавить дополнительные проверки.
     """
-    # Парсим payload
+    # Парсим payload с UUID
     try:
         parts = pre_checkout.invoice_payload.split("_")
-        user_id_from_payload = int(parts[2])
+        if len(parts) < 5:  # Старый формат без UUID
+            user_id_from_payload = int(parts[2])
+        else:  # Новый формат с UUID
+            user_id_from_payload = int(parts[2])
+            payment_uuid = parts[4]
         
         # Проверяем что user_id совпадает
         if user_id_from_payload != pre_checkout.from_user.id:
@@ -173,10 +196,20 @@ async def process_successful_payment(message: Message):
     payment_info: SuccessfulPayment = message.successful_payment
     user_id = message.from_user.id
     
-    # Парсим payload
+    # Парсим payload с UUID
     payload = payment_info.invoice_payload
     try:
-        _, duration_str, user_id_from_payload, price_str = payload.split("_")
+        parts = payload.split("_")
+        
+        # Поддержка старого формата (без UUID) и нового (с UUID)
+        if len(parts) < 5:
+            # Старый формат: premium_30d_userid_price
+            _, duration_str, user_id_from_payload, price_str = parts
+            payment_uuid = None
+        else:
+            # Новый формат: premium_30d_userid_price_uuid
+            _, duration_str, user_id_from_payload, price_str, payment_uuid = parts
+        
         price = int(price_str)
         
         # Дополнительная проверка user_id
@@ -188,20 +221,34 @@ async def process_successful_payment(message: Message):
         # Активируем Premium
         await db.set_subscription(user_id, days=config.premium_duration_days)
         
-        # Обновляем запись платежа
-        await db.complete_payment(
-            user_id=user_id,
-            charge_id=payment_info.telegram_payment_charge_id,
-            amount=price
-        )
+        # Обновляем запись платежа (с UUID если есть)
+        if payment_uuid:
+            await db.complete_payment(
+                payment_uuid=payment_uuid,
+                charge_id=payment_info.telegram_payment_charge_id,
+                user_id=user_id,
+                amount=price
+            )
+        else:
+            # Fallback для старых платежей без UUID
+            logger.warning(f"⚠️ Payment without UUID for user {user_id}")
         
         # Записываем успешную покупку в воронку
         discount_used = (price == config.premium_price_discount)
         await db.track_funnel(user_id, 'purchase', metadata={
             'price': price,
             'discount_used': discount_used,
-            'charge_id': payment_info.telegram_payment_charge_id
+            'charge_id': payment_info.telegram_payment_charge_id,
+            'uuid': payment_uuid
         })
+        
+        # 📝 ОТДЕЛЬНОЕ ЛОГИРОВАНИЕ ПЛАТЕЖЕЙ для аудита
+        payment_logger = logging.getLogger("payments")
+        payment_logger.info(
+            f"PAYMENT_SUCCESS | user_id={user_id} | amount={price} | "
+            f"charge_id={payment_info.telegram_payment_charge_id} | "
+            f"discount={discount_used} | uuid={payment_uuid}"
+        )
         
         # Отправляем поздравление и переключаем на Premium-меню
         await message.answer(
@@ -216,7 +263,8 @@ async def process_successful_payment(message: Message):
         logger.info(
             f"🎉 Premium активирован: {user_id}, "
             f"price={price}⭐️, discount={discount_used}, "
-            f"charge_id={payment_info.telegram_payment_charge_id}"
+            f"charge_id={payment_info.telegram_payment_charge_id}, "
+            f"uuid={payment_uuid}"
         )
         
     except Exception as e:

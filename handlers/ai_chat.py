@@ -84,6 +84,12 @@ async def start_ai_chat(message: Message, state: FSMContext):
 
 # === ОБРАБОТКА СООБЩЕНИЙ В AI-ЧАТЕ ===
 
+# Rate limiting для AI-запросов
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+user_last_requests = defaultdict(list)
+
 @router.message(UserState.chatting_with_ai)
 async def handle_ai_message(message: Message, state: FSMContext):
     """Обработка сообщений пользователя в AI-чате"""
@@ -101,24 +107,64 @@ async def handle_ai_message(message: Message, state: FSMContext):
         )
         return
     
+    # 🔒 RATE LIMITING: макс 10 запросов в минуту
+    now = datetime.now()
+    user_requests = user_last_requests[user_id]
+    
+    # Удаляем старые запросы (>1 мин)
+    user_requests = [t for t in user_requests if now - t < timedelta(minutes=1)]
+    
+    if len(user_requests) >= 10:
+        await message.answer(
+            "⏳ Пожалуйста, подождите немного перед следующим вопросом.\n"
+            "Лимит: 10 запросов в минуту.",
+            reply_markup=build_exit_ai_keyboard()
+        )
+        logger.warning(f"⚠️ Rate limit hit for user {user_id}")
+        return
+    
+    user_requests.append(now)
+    user_last_requests[user_id] = user_requests
+    
     # Показываем что печатаем
     await message.bot.send_chat_action(user_id, "typing")
     
     try:
+        # 💾 Получаем историю разговора
+        data = await state.get_data()
+        history = data.get('chat_history', [])
+        
+        # Добавляем сообщение пользователя
+        history.append({"role": "user", "content": user_message})
+        
+        # Формируем контекст из последних 5 сообщений
+        context_messages = history[-5:]
+        context_prompt = "\n\n".join([
+            f"{'User' if msg['role']=='user' else 'Assistant'}: {msg['content']}"
+            for msg in context_messages[:-1]  # Все кроме последнего
+        ])
+        
+        # Полный промпт с контекстом
+        full_prompt = f"История разговора:\n{context_prompt}\n\nТекущий вопрос User: {user_message}" if context_prompt else user_message
+        
         # Отправляем запрос в AI
         response = await ai_manager.generate_text(
-            prompt=user_message,
+            prompt=full_prompt,
             system_prompt=SYSTEM_PROMPT_VALENTIN,
             max_tokens=800  # Ограничиваем длину ответа
         )
         
         if response:
+            # Добавляем ответ в историю
+            history.append({"role": "assistant", "content": response})
+            await state.update_data(chat_history=history)
+            
             # Отправляем ответ пользователю
             await message.answer(
                 response,
                 reply_markup=build_exit_ai_keyboard()
             )
-            logger.debug(f"🤖 AI ответ отправлен: {user_id}")
+            logger.debug(f"🤖 AI ответ отправлен: {user_id} (история: {len(history)} сообщений)")
         else:
             # AI не смог ответить
             await message.answer(
