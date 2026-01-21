@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = Field(None, description="OpenAI API key")
     gemini_api_key: Optional[str] = Field(None, description="Google Gemini API key")
     mistral_api_key: Optional[str] = Field(None, description="Mistral AI API key")
+    deepseek_api_key: Optional[str] = Field(None, description="DeepSeek API key")
+    deepseek_base_url: str = Field("https://api.deepseek.com", description="DeepSeek API Base URL")
+    huggingface_api_key: Optional[str] = Field(None, description="Hugging Face API Token")
+    ollama_base_url: str = Field("http://localhost:11434", description="Ollama API Base URL")
+    ollama_model: str = Field("llama3", description="Ollama Model Name")
 
     # === TELEGRAM USERBOT (Опциональные) ===
     tg_api_id: int = Field(0, description="Telegram API ID from my.telegram.org")
@@ -69,10 +74,11 @@ class Settings(BaseSettings):
 
     def validate_ai_providers(self):
         """Проверяет что хотя бы один AI провайдер настроен"""
-        if not self.openai_api_key and not self.gemini_api_key and not self.mistral_api_key:
+        if not any([self.openai_api_key, self.gemini_api_key, self.mistral_api_key, 
+                   self.deepseek_api_key, self.huggingface_api_key, self.ollama_base_url]):
             raise ValueError(
                 "❌ Необходим хотя бы один AI провайдер!\n"
-                "Установите OPENAI_API_KEY, GEMINI_API_KEY или MISTRAL_API_KEY в .env"
+                "Установите API ключи в .env"
             )
 
     def get_source_channels_list(self) -> List[str]:
@@ -148,6 +154,11 @@ ADMIN_ID = config.admin_id
 OPENAI_API_KEY = config.openai_api_key
 GEMINI_API_KEY = config.gemini_api_key
 MISTRAL_API_KEY = config.mistral_api_key
+DEEPSEEK_API_KEY = config.deepseek_api_key
+DEEPSEEK_BASE_URL = config.deepseek_base_url
+HUGGINGFACE_API_KEY = config.huggingface_api_key
+OLLAMA_BASE_URL = config.ollama_base_url
+OLLAMA_MODEL = config.ollama_model
 TG_API_ID = config.tg_api_id
 TG_API_HASH = config.tg_api_hash
 TG_SESSION_STRING = config.tg_session_string

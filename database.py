@@ -1,7 +1,7 @@
 # database.py
 import aiosqlite
 import logging
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from thefuzz import fuzz
 
 DB_PATH = "crypto_news.db"
@@ -29,22 +29,30 @@ class NewsDatabase:
                                  published_at       TEXT        NOT NULL,
                                  added_at           TEXT    DEFAULT CURRENT_TIMESTAMP,
                                  posted_to_telegram BOOLEAN DEFAULT 0,
-                                 priority           INTEGER DEFAULT 0
+                                 priority           INTEGER DEFAULT 0,
+                                 telegram_message_id INTEGER DEFAULT NULL
                              )
                              """)
             
             # ✅ МИГРАЦИЯ: Добавляем колонку full_content если её нет
             try:
-                # Проверяем существование колонки
+                # Проверяем существование колонок
                 async with db.execute("PRAGMA table_info(news)") as cursor:
                     columns = [row[1] for row in await cursor.fetchall()]
+                    
                     if 'full_content' not in columns:
                         await db.execute("ALTER TABLE news ADD COLUMN full_content TEXT")
                         await db.commit()
                         logger.info("✅ Добавлена колонка full_content в таблицу news")
+                        
+                    if 'telegram_message_id' not in columns:
+                        await db.execute("ALTER TABLE news ADD COLUMN telegram_message_id INTEGER")
+                        await db.commit()
+                        logger.info("✅ Добавлена колонка telegram_message_id в таблицу news")
+                        
             except Exception as e:
                 # Игнорируем ошибки миграции
-                logger.debug(f"⚠️ Миграция full_content: {e}")
+                logger.debug(f"⚠️ Миграция: {e}")
             
             # Добавляем индекс для быстрого поиска по приоритету
             await db.execute("""
@@ -205,10 +213,37 @@ class NewsDatabase:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
 
-    async def mark_as_posted(self, url: str):
+    async def mark_as_posted(self, url: str, message_id: int = None):
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("UPDATE news SET posted_to_telegram = 1 WHERE url = ?", (url,))
+            if message_id:
+                await db.execute("UPDATE news SET posted_to_telegram = 1, telegram_message_id = ? WHERE url = ?", (message_id, url))
+            else:
+                await db.execute("UPDATE news SET posted_to_telegram = 1 WHERE url = ?", (url,))
             await db.commit()
+
+    async def get_news_for_period(self, hours: int = 24, min_priority: int = 4) -> List[Dict]:
+        """
+        Получает новости за указанный период (в часах) с фильтром по приоритету.
+        Используется для генерации дайджестов.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            # Вычисляем время отсечки (UTC, так как в БД время обычно в UTC или локальном, надеемся на CURRENT_TIMESTAMP)
+            # SQLite modifier: '-24 hours'
+            time_modifier = f'-{hours} hours'
+            
+            async with db.execute(
+                f"""
+                SELECT title, summary, full_content, source, url, telegram_message_id
+                FROM news 
+                WHERE added_at >= datetime('now', ?) 
+                AND priority >= ?
+                ORDER BY priority DESC, id ASC
+                """,
+                (time_modifier, min_priority)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
 
 
 db = NewsDatabase()

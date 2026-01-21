@@ -425,9 +425,10 @@ class RichMediaMessage:
 
     async def send(self, bot, chat_id: int):
         try:
+            sent_message = None
             if self.image_url and ImageExtractor.is_valid_image_url(self.image_url):
                 try:
-                    await bot.send_photo(
+                    sent_message = await bot.send_photo(
                         chat_id=chat_id,
                         photo=self.image_url,
                         caption=self.text,
@@ -437,7 +438,7 @@ class RichMediaMessage:
                     logger.info("✅ Фото + текст отправлены")
                 except Exception as e:
                     logger.warning(f"⚠️ Ошибка фото: {e}. Отправляю текст.")
-                    await bot.send_message(
+                    sent_message = await bot.send_message(
                         chat_id=chat_id,
                         text=self.text,
                         parse_mode="HTML",
@@ -445,15 +446,15 @@ class RichMediaMessage:
                         reply_markup=self.reply_markup
                     )
             else:
-                await bot.send_message(
+                sent_message = await bot.send_message(
                     chat_id=chat_id,
                     text=self.text,
                     parse_mode="HTML",
                     disable_web_page_preview=True,
                     reply_markup=self.reply_markup
                 )
-            return True
+            return sent_message
 
         except Exception as e:
             logger.error(f"❌ Ошибка отправки: {e}")
-            return False
+            return None

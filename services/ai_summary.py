@@ -1,210 +1,27 @@
-# services/ai_summary.py
-import os
 import logging
-import json
-import re
-from google import genai
 import asyncio
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
-from openai import AsyncOpenAI
-from config import OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY
+# Импортируем менеджер провайдеров
+from services.ai.manager import AIProviderManager
+# Импортируем настройки
+from config import config
 
 logger = logging.getLogger(__name__)
 
 
 class NewsAnalyzer:
     def __init__(self):
-        self.client = None
-        self.model_name = None
-        self.openai_client = None
-        self.mistral_client = None
-        # Rate limiting для разных провайдеров
-        self._last_gemini_call_time = 0
-        self._last_mistral_call_time = 0
-        self._last_openai_call_time = 0
-        self._gemini_delay_seconds = 4.5  # Gemini free tier: 15 RPM = минимум 4 секунды
-        self._mistral_delay_seconds = 1.1  # Mistral free tier: 1 RPS = минимум 1 секунда
-        self._openai_delay_seconds = 1.0  # OpenAI (платный, более либеральные лимиты)
-        # ✅ ИСПРАВЛЕНО: Семафор для ограничения одновременных AI запросов (максимум 2)
-        self._ai_request_semaphore = asyncio.Semaphore(2)
-
-        # 1. Инициализация OpenAI (Fallback #2)
-        if OPENAI_API_KEY:
-            self.openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-
-        # 2. Инициализация Gemini (Основной) - новый API google.genai
-        if GEMINI_API_KEY:
-            try:
-                self.client = genai.Client(api_key=GEMINI_API_KEY)
-                self.model_name = self._find_best_model()
-                if self.model_name:
-                    logger.info(f"✅ ИИ Аналитик подключен к: {self.model_name}")
-            except Exception as e:
-                logger.error(f"❌ Критическая ошибка инициализации Gemini: {e}")
-        else:
-            logger.warning("⚠️ GEMINI_API_KEY не установлен.")
+        # Инициализируем менеджер, который сам поднимет всех провайдеров
+        self.ai_manager = AIProviderManager()
         
-        # 3. Инициализация Mistral AI (Fallback #1) - ВРЕМЕННО ОТКЛЮЧЕН
-        # ⚠️ Mistral AI отключен из-за конфликтов зависимостей:
-        # - mistralai требует pydantic>=2.9.0 (несовместимо с aiogram 3.3.0)
-        # - mistralai<1.3.0 требует httpx<0.28.0 (несовместимо с google-genai)
-        # Для использования Mistral AI потребуется обновить aiogram до версии, поддерживающей pydantic>=2.9.0
-        if False and MISTRAL_API_KEY:  # Временно отключено
-            try:
-                from mistralai import Mistral
-                self.mistral_client = Mistral(api_key=MISTRAL_API_KEY)
-                logger.info("✅ Mistral AI подключен (Fallback #1)")
-            except ImportError:
-                logger.warning("⚠️ mistralai не установлен, Mistral AI недоступен. Установите: pip install mistralai")
-            except Exception as e:
-                logger.warning(f"⚠️ Ошибка инициализации Mistral AI: {e}")
-
-    def _find_best_model(self):
-        """Выбирает стабильную модель для free tier"""
-        # Для нового API google-genai пробуем несколько вариантов имен моделей
-        # Попробуем последнюю доступную модель
-        model_name = 'gemini-2.5-flash'  # Последняя версия Flash модели
-        logger.info(f"✅ Используем модель: {model_name} (free tier compatible)")
-        # Если эта модель не работает, будет fallback на OpenAI
-        return model_name
-
-    def _clean_json_response(self, text: str) -> Optional[Dict]:
-        """Очищает ответ от Markdown и ищет JSON объект"""
-        try:
-            # 1. Удаляем блоки кода ```json ... ```
-            text = text.replace('```json', '').replace('```', '')
-
-            # 2. Ищем JSON структуру с помощью regex (от первой { до последней })
-            match = re.search(r'\{.*\}', text, re.DOTALL)
-            if match:
-                json_str = match.group(0)
-                return json.loads(json_str)
-
-            # 3. Если regex не нашел, пробуем распарсить весь текст
-            return json.loads(text.strip())
-        except Exception as e:
-            logger.error(f"⚠️ Ошибка парсинга JSON: {e}. Текст: {text[:50]}...")
-            return None
-
-    async def _rate_limit_wait_gemini(self):
-        """Ожидание для соблюдения Gemini rate limiting (4.5 сек)"""
-        import time
-        current_time = time.time()
-        time_since_last_call = current_time - self._last_gemini_call_time
-        
-        if time_since_last_call < self._gemini_delay_seconds:
-            wait_time = self._gemini_delay_seconds - time_since_last_call
-            await asyncio.sleep(wait_time)
-        
-        self._last_gemini_call_time = time.time()
-
-    async def _rate_limit_wait_mistral(self):
-        """Ожидание для соблюдения Mistral rate limiting (1.1 сек)"""
-        import time
-        current_time = time.time()
-        time_since_last_call = current_time - self._last_mistral_call_time
-        
-        if time_since_last_call < self._mistral_delay_seconds:
-            wait_time = self._mistral_delay_seconds - time_since_last_call
-            await asyncio.sleep(wait_time)
-        
-        self._last_mistral_call_time = time.time()
-
-    async def _rate_limit_wait_openai(self):
-        """Ожидание для соблюдения OpenAI rate limiting (1 сек)"""
-        import time
-        current_time = time.time()
-        time_since_last_call = current_time - self._last_openai_call_time
-        
-        if time_since_last_call < self._openai_delay_seconds:
-            wait_time = self._openai_delay_seconds - time_since_last_call
-            await asyncio.sleep(wait_time)
-        
-        self._last_openai_call_time = time.time()
-
-    async def _analyze_with_mistral(self, prompt: str) -> Optional[Dict]:
-        """Анализ через Mistral AI (Fallback #1)"""
-        if not self.mistral_client:
-            return None
-
-        # Rate limiting для Mistral
-        await self._rate_limit_wait_mistral()
-
-        try:
-            logger.info("🔮 Переключаюсь на Mistral AI (Fallback #1)...")
-            # Mistral использует синхронный API, оборачиваем в executor
-            def _generate():
-                response = self.mistral_client.chat.complete(
-                    model="mistral-large-latest",  # Лучшая модель для анализа
-                    messages=[
-                        {"role": "system", "content": "You are a crypto news editor. Output only valid JSON."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    response_format={"type": "json_object"}
-                )
-                return response.choices[0].message.content
-            
-            response_text = await asyncio.wait_for(
-                asyncio.to_thread(_generate),
-                timeout=20.0
-            )
-            
-            if response_text:
-                result = self._clean_json_response(response_text)
-                if result:
-                    return result
-                logger.warning("⚠️ Mistral вернул некорректный JSON")
-        except Exception as e:
-            error_str = str(e)
-            if '429' in error_str or 'rate limit' in error_str.lower():
-                logger.error(f"❌ Mistral Error: Превышен rate limit. Fallback на OpenAI...")
-            else:
-                logger.error(f"❌ Mistral Error: {e}")
-            return None
-
-    async def _analyze_with_openai(self, prompt: str) -> Optional[Dict]:
-        """Резервный анализ через OpenAI (Fallback #2)"""
-        if not self.openai_client:
-            return None
-
-        # Rate limiting для OpenAI
-        await self._rate_limit_wait_openai()
-
-        try:
-            logger.info("🤖 Переключаюсь на OpenAI (Fallback #2)...")
-            response = await self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",  # Дешевая и умная модель
-                messages=[
-                    {"role": "system", "content": "You are a crypto news editor. Output only valid JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                response_format={"type": "json_object"},  # Гарантирует JSON
-                timeout=10  # ✅ ИСПРАВЛЕНО: Уменьшен таймаут с 15 до 10 секунд
-            )
-            content = response.choices[0].message.content
-            return json.loads(content)
-        except Exception as e:
-            logger.error(f"❌ OpenAI Error: {e}")
-            return None
-
     async def analyze_text(self, text: str, context: str = "news") -> Optional[Dict]:
         """
-        Универсальный метод анализа с улучшенным промптом.
-        ✅ ИСПРАВЛЕНО: Добавлен общий таймаут 30 секунд для всей операции.
+        Анализирует новость и возвращает JSON с важностью и саммари.
+        Использует каскад провайдеров через AIProviderManager.
         """
-        # ✅ ИСПРАВЛЕНО: Общий таймаут для всей операции анализа (30 секунд)
-        try:
-            return await asyncio.wait_for(
-                self._analyze_text_internal(text, context),
-                timeout=30.0
-            )
-        except asyncio.TimeoutError:
-            logger.error("❌ AI анализ превысил общий таймаут (30 секунд)")
-            return None
-    
-    async def _analyze_text_internal(self, text: str, context: str = "news") -> Optional[Dict]:
-        """Внутренний метод анализа (без общего таймаута, используется внутри analyze_text)"""
+        
+        # 1. Формируем промпт
         prompt = f"""Ты эксперт-аналитик криптовалютного рынка с 10+ летним опытом.
 
 ВХОДНАЯ НОВОСТЬ:
@@ -241,126 +58,135 @@ class NewsAnalyzer:
     "market_impact": "High|Medium|Low"
 }}"""
 
-        # 1. Попытка через Gemini (новый API google.genai) - ОСНОВНОЙ
-        if self.client and self.model_name:
-            try:
-                # Rate limiting для Gemini (4.5 сек)
-                await self._rate_limit_wait_gemini()
+        # 2. Делегируем выполнение менеджеру
+        # Менеджер сам попробует Gemini -> DeepSeek -> OpenAI
+        result = await self.ai_manager.analyze_json(
+            prompt=prompt, 
+            system_prompt="You are a crypto news editor. Output only valid JSON."
+        )
+        
+        return result
+
+    async def generate_digest(self, news_list: list[Dict], period_name: str = "сутки") -> Optional[str]:
+        """
+        Генерирует дайджест новостей.
+        Если AI не справился - фоллбэк на Simple Digest.
+        """
+        if not news_list:
+            return None
+
+        # Подготовка списка новостей для промпта
+        input_text = ""
+        # Получаем channel_id для формирования ссылок
+        channel_id = str(config.telegram_channel_id)
+        if channel_id.startswith("-100"):
+            channel_id = channel_id[4:]
+
+        for i, news in enumerate(news_list[:50]):
+            title = news.get("title", "Без заголовка")
+            summary = news.get("summary", "")
+            
+            msg_id = news.get("telegram_message_id")
+            if msg_id and channel_id:
+                url = f"https://t.me/c/{channel_id}/{msg_id}"
+            else:
+                url = news.get("url", "#")
+            
+            input_text += f"{i+1}. {title}\nСсылка: {url}\nСуть: {summary}\n\n"
+
+        prompt = f"""Ты — профессиональный редактор крипто-новостного канала.
+Твоя задача — составить ЛАКОНИЧНЫЙ ДАЙДЖЕСТ (сводку) новостей за {period_name}.
+
+ВОТ СПИСОК НОВОСТЕЙ:
+{input_text}
+
+ТРЕБОВАНИЯ К ДАЙДЖЕСТУ:
+1. Заголовок: "🗞 **Главное за {period_name}**" (или "неделю").
+2. Формат — ТОЛЬКО список заголовков.
+3. НИКАКИХ ОПИСАНИЙ, ТЕКСТОВ ИЛИ СУТИ. Только кликабельный заголовок.
+4. Выбери ТОП-5-7 самых важных тем. Сгруппируй дубликаты.
+5. Каждый пункт должен начинаться с эмодзи, соответствующего теме.
+6. Ссылка должна быть встроена в сам текст заголовка.
+   Пример HTML: `💎 <a href="URL">Bitcoin пробил $100k</a>`
+7. В конце: Короткий итог одной фразой (жирным шрифтом).
+8. СТРОГО HTML (b, i, a, code, s). Без Markdown!
+9. ВАЖНО: Добавляй пустую строку между пунктами списка для читаемости!
+
+ПРИМЕР СТРУКТУРЫ:
+🗞 **Главное за сутки**
+
+💎 <a href="...">Bitcoin пробил $100k</a>
+
+⚖️ <a href="...">SEC одобрила ETF на Solana</a>
+
+...
+
+📊 **Итог**: Рынок показывает уверенный рост на фоне новостей.
+"""
+        
+        # 1. Пробуем через AI
+        result_text = await self.ai_manager.generate_text(
+            prompt=prompt,
+            system_prompt="You are a helpful crypto news editor. Output HTML.",
+            timeout=120.0 # Дайджест может генерироваться долго
+        )
+        
+        if result_text:
+            # Очистка от markdown блоков, если они есть
+            clean_text = result_text.replace("```html", "").replace("```", "").strip()
+            clean_text += f"\n\n#дайджест"
+            return clean_text
+            
+        # 2. Fallback на Simple Digest
+        logger.warning("⚠️ Все AI сервисы недоступны. Генерирую простой дайджест (Simple Mode).")
+        return self._generate_simple_digest(news_list, period_name, channel_id)
+
+    def _generate_simple_digest(self, news_list: list, period_name: str, channel_id: Optional[str]) -> str:
+        """
+        Генерация простого дайджеста без участия AI.
+        Исправленная и укрепленная версия.
+        """
+        digest = f"🗞 **Главное за {period_name}** (Simple Mode)\n\n"
+        
+        # Берем 7 новостей
+        count = 0
+        for news in news_list:
+            if count >= 7:
+                break
                 
-                # Используем правильный формат для нового API google.genai
-                # Асинхронный вызов через client.aio
-                # ✅ ИСПРАВЛЕНО: Уменьшен таймаут с 20 до 15 секунд
-                try:
-                    response = await asyncio.wait_for(
-                        self.client.aio.models.generate_content(
-                            model=self.model_name,
-                            contents=prompt
-                        ),
-                        timeout=15.0
-                    )
-
-                    # Извлекаем текст из ответа (пробуем разные способы)
-                    response_text = None
-                    if hasattr(response, 'text'):
-                        response_text = response.text
-                    elif hasattr(response, 'candidates') and response.candidates:
-                        # Альтернативный способ извлечения текста
-                        candidate = response.candidates[0]
-                        if hasattr(candidate, 'content'):
-                            content = candidate.content
-                            if hasattr(content, 'parts') and content.parts:
-                                first_part = content.parts[0]
-                                if hasattr(first_part, 'text'):
-                                    response_text = first_part.text
-                    
-                    if response_text:
-                        result = self._clean_json_response(response_text)
-                        if result:
-                            # Добавляем инфу об использованной модели
-                            result['model_used'] = 'gemini' 
-                            return result
-                        logger.warning("⚠️ Gemini вернул некорректный JSON")
-                    else:
-                        logger.warning(f"⚠️ Gemini вернул пустой ответ. Response type: {type(response)}")
-
-                except asyncio.TimeoutError:
-                     logger.error(f"❌ Gemini Timeout (15s)")
-                     raise # Fallback to next provider
-
-            except Exception as e:
-                error_str = str(e)
-                # Детальное логирование ошибки
-                if '404' in error_str or 'NOT_FOUND' in error_str:
-                    logger.error(f"❌ Gemini Error: Модель не найдена. Проверьте имя модели: {self.model_name}")
-                    logger.error(f"💡 Попробуйте другую модель или проверьте документацию Google AI")
-                elif '429' in error_str or 'RESOURCE_EXHAUSTED' in error_str:
-                    logger.error(f"❌ Gemini Error: Превышена квота API. Fallback на OpenAI...")
-                else:
-                    logger.error(f"❌ Gemini Error: {e}. Fallback на OpenAI...")
-                # Fallback на Mistral произойдет автоматически ниже
-
-        # 2. Попытка через Mistral AI (Fallback #1) - ВРЕМЕННО ОТКЛЮЧЕН
-        # if self.mistral_client:
-        #     result = await self._analyze_with_mistral(prompt)
-        #     if result:
-        #         return result
-
-        # 3. Попытка через OpenAI (Fallback #2) - последний резерв
-        if self.openai_client:
-            result = await self._analyze_with_openai(prompt)
-            if result:
-                result['model_used'] = 'openai'
-                return result
-
-        return None
-
-    async def process_incoming_news(self, raw_text: str) -> Optional[Dict]:
-        """Для Telegram Listener - фильтрует только важные новости"""
-        
-        # ✅ ОПТИМИЗАЦИЯ: Предварительная проверка через PriorityCalculator
-        # Чтобы не тратить токены на мусор
-        from services.priority_calculator import PriorityCalculator
-        
-        # Создаем временный объект новости
-        temp_news = {
-            'title': raw_text[:100], # Берем начало как заголовок
-            'summary': raw_text[100:] if len(raw_text) > 100 else '',
-            'source': 'Userbot'
-        }
-        
-        # Проверяем, нужен ли AI анализ
-        if not PriorityCalculator.needs_ai_processing(temp_news):
-            return None
-
-        # Если прошел фильтр - анализируем
-        result = await self.analyze_text(raw_text)
-        if not result:
-            return None
-        
-        # Проверяем важность новости (Critical, Very High, High)
-        importance = result.get('importance', '').lower()
-        importance_score = result.get('importance_score', 0)
-        
-        # Принимаем новости с высокой важностью
-        if importance in ['critical', 'very high', 'high']:
-            return result
-        
-        # Или если importance_score >= 7 (высокая важность)
-        if isinstance(importance_score, (int, float)) and importance_score >= 7:
-            return result
-        
-        # Все остальные отфильтровываем
-        return None
-
-    async def translate_and_analyze(self, title: str, summary: str) -> Optional[Dict]:
-        """Для RSS"""
-        text = f"{title}. {summary}"
-        result = await self.analyze_text(text)
-
-        if result:
-            return {
-                "clean_title": result.get('ru_title', title),
-                "clean_summary": result.get('ru_summary', summary),
-                "coin": result.get('coin')
-            }
-        return None
+            title = news.get("title", "Без заголовка")
+            msg_id = news.get("telegram_message_id")
+            original_url = news.get("url")
+            
+            # Логика ссылок:
+            # 1. Если есть msg_id и channel_id -> внутренняя ссылка
+            # 2. Если нет -> внешняя ссылка (original_url)
+            # 3. Если и ее нет -> пропускаем или ставим заглушку (лучше пропустить)
+            
+            url = None
+            if msg_id and channel_id:
+                url = f"https://t.me/c/{channel_id}/{msg_id}"
+            elif original_url and original_url.startswith("http"):
+                url = original_url
+            
+            if not url:
+                logger.warning(f"⚠️ Пропуск новости в Simple Digest (нет ссылки): {title}")
+                continue
+            
+            # Подбираем эмодзи по ключевым словам (примитивно)
+            emoji = "📰"
+            t_lower = title.lower()
+            if "bitcoin" in t_lower or "btc" in t_lower: emoji = "💎"
+            elif "ethereum" in t_lower or "eth" in t_lower: emoji = "🔷"
+            elif "solana" in t_lower or "sol" in t_lower: emoji = "🟣"
+            elif "sec" in t_lower or "суд" in t_lower: emoji = "⚖️"
+            elif "рост" in t_lower or "to the moon" in t_lower: emoji = "🚀"
+            elif "падение" in t_lower or "обвал" in t_lower: emoji = "📉"
+            elif "hack" in t_lower or "взлом" in t_lower: emoji = "🚨"
+            
+            digest += f"{emoji} <a href=\"{url}\">{title}</a>\n\n"
+            count += 1
+            
+        digest += f"📊 **Итог**: {len(news_list)} важных новостей за этот период.\n"
+        digest += f"\n#дайджест #SimpleMode"
+        return digest

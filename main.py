@@ -184,6 +184,27 @@ async def main():
             id="health_monitor",
             name="Health Monitor"
         )
+        
+        # Задачи дайджестов (Cron)
+        from apscheduler.triggers.cron import CronTrigger
+        
+        # Ежедневный дайджест в 21:00
+        from services.scheduler_tasks import daily_digest_task, weekly_digest_task
+        
+        scheduler.add_job(
+            daily_digest_task,
+            CronTrigger(hour=21, minute=0),
+            id="daily_digest",
+            name="Daily Digest"
+        )
+        
+        # Еженедельный дайджест в Воскресенье 22:00
+        scheduler.add_job(
+            weekly_digest_task,
+            CronTrigger(day_of_week='sun', hour=22, minute=0),
+            id="weekly_digest",
+            name="Weekly Digest"
+        )
         scheduler.start()
         logger.info("✅ Планировщик запущен")
 

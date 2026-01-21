@@ -24,7 +24,7 @@ class AdminStates(StatesGroup):
 def get_main_menu_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📝 Создать публикацию")],
+            [KeyboardButton(text="📝 Создать публикацию"), KeyboardButton(text="📅 Дайджесты")],
             [KeyboardButton(text="⚙️ Настройки футера"), KeyboardButton(text="📊 Статистика")]
         ],
         resize_keyboard=True
@@ -184,3 +184,49 @@ async def save_footer(message: Message, state: FSMContext):
     await db.set_setting("footer_template", new_footer)
     await message.answer("✅ Шаблон футера сохранен!", reply_markup=get_main_menu_keyboard())
     await state.clear()
+    await db.set_setting("footer_template", new_footer)
+    await message.answer("✅ Шаблон футера сохранен!", reply_markup=get_main_menu_keyboard())
+    await state.clear()
+
+
+# --- ДАЙДЖЕСТЫ ---
+
+def get_digest_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🌞 Суточный (24ч)", callback_data="digest_daily"),
+             InlineKeyboardButton(text="🗓 Недельный (7д)", callback_data="digest_weekly")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")]
+        ]
+    )
+
+@router.message(F.text == "📅 Дайджесты", F.from_user.id == int(ADMIN_ID))
+async def digest_menu(message: Message):
+    await message.answer(
+        "Какой дайджест сгенерировать?",
+        reply_markup=get_digest_keyboard()
+    )
+
+@router.callback_query(F.data == "digest_daily")
+async def manual_daily_digest(callback: CallbackQuery):
+    await callback.message.edit_text("⏳ Генерирую суточный дайджест... Это может занять минуту.")
+    from services.scheduler_tasks import daily_digest_task
+    # Запускаем задачу
+    # Важно: daily_digest_task отправляет сообщение в канал.
+    # Мы можем захотеть увидеть его в личке, но пока пусть шлет в канал как положено,
+    # а админу пришем отчет.
+    try:
+        await daily_digest_task()
+        await callback.message.answer("✅ Суточный дайджест отправлен в канал!")
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка: {e}")
+
+@router.callback_query(F.data == "digest_weekly")
+async def manual_weekly_digest(callback: CallbackQuery):
+    await callback.message.edit_text("⏳ Генерирую недельный дайджест... Ждите.")
+    from services.scheduler_tasks import weekly_digest_task
+    try:
+        await weekly_digest_task()
+        await callback.message.answer("✅ Недельный дайджест отправлен в канал!")
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка: {e}")

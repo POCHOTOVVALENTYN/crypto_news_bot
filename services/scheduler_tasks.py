@@ -185,26 +185,35 @@ async def check_queue_and_post():
     # ✅ НОВОЕ: Извлекаем ключевые моменты для bullet points
     key_points = ContentSummarizer.extract_key_points(full_content, points_count=3) if full_content else []
     
-    # ✅ ИСПРАВЛЕНО: Переводим key_points если новость была переведена
-    if translated_data and key_points:
-        logger.debug(f"🔄 Перевожу ключевые моменты ({len(key_points)} пунктов)...")
+    # ✅ ИСПРАВЛЕНО: Переводим key_points НЕЗАВИСИМО от перевода основной новости
+    if key_points:
+        logger.debug(f"🔄 Проверка языка ключевых моментов ({len(key_points)} пунктов)...")
         translated_points = []
         loop = asyncio.get_event_loop()
+        
         for point in key_points:
             try:
-                # translate_text - синхронный метод, оборачиваем в executor
-                translated_point = await loop.run_in_executor(
-                    None, translator.translate_text, point, 'auto', 'ru'
-                )
-                if translated_point:
-                    translated_points.append(translated_point)
+                # 1. Определяем язык пункта
+                detected_lang = await loop.run_in_executor(None, translator.detect_language, point)
+                
+                # 2. Если не русский - переводим
+                if detected_lang != 'ru':
+                    translated_point = await loop.run_in_executor(
+                        None, translator.translate_text, point, detected_lang or 'auto', 'ru'
+                    )
+                    if translated_point:
+                        translated_points.append(translated_point)
+                    else:
+                        translated_points.append(point)
                 else:
                     translated_points.append(point)
+                    
             except Exception as e:
                 logger.debug(f"⚠️ Ошибка перевода ключевого момента: {e}")
                 translated_points.append(point)
+                
         key_points = translated_points
-        logger.debug(f"✅ Ключевые моменты переведены")
+        logger.debug(f"✅ Обработка ключевых моментов завершена")
     
     # Получаем технический анализ
     coin_from_ai = ai_data.get('coin') if ai_data else None
@@ -255,11 +264,94 @@ async def check_queue_and_post():
     inline_keyboard = keyboard_builder.as_markup()
     
     rich_msg = RichMediaMessage(msg_data['text'], msg_data['image_url'], reply_markup=inline_keyboard)
-    if await rich_msg.send(bot, config.telegram_channel_id):
-        await db.mark_as_posted(news_item['url'])
+    sent_message = await rich_msg.send(bot, config.telegram_channel_id)
+    
+    if sent_message:
+        # ✅ НОВОЕ: Сохраняем ID сообщения для внутренних ссылок
+        message_id = sent_message.message_id
+        await db.mark_as_posted(news_item['url'], message_id=message_id)
+        
         rate_limiter.mark_posted()
         if is_hot:
-            logger.info("🔥 Молния опубликована вне очереди")
+            logger.info(f"🔥 Молния опубликована вне очереди (MsgID: {message_id})")
+
+
+@safe_task("Daily Digest")
+async def daily_digest_task():
+    """Ежедневный дайджест (за 24 часа)"""
+    logger.info("📅 Запуск генерации ежедневного дайджеста...")
+    news_list = await db.get_news_for_period(hours=24, min_priority=5) # Только важные
+    
+    logger.info(f"📊 Найдены новости для Daily Digest: {len(news_list)}")
+    
+    if len(news_list) < 3:
+        logger.info("⚠️ Мало важных новостей для дайджеста (<3), пропускаем.")
+        return
+
+    digest_html = await ai_analyzer.generate_digest(news_list, period_name="сутки")
+    
+    if digest_html:
+        try:
+            # Получаем шаблон футера
+            footer = await db.get_setting("footer_template", "")
+            if footer:
+                digest_html += f"\n\n{footer}"
+            
+            # ✅ НОВОЕ: Кнопки для дайджеста
+            keyboard_builder = InlineKeyboardBuilder()
+            keyboard_builder.button(text="💬 Открытый общий чат", url="https://t.me/+514GO2tFjAtkMWRi")
+            keyboard_builder.button(text="📢 Подписаться", url="https://t.me/blexler_invest")
+            keyboard_builder.adjust(1)
+            
+            await bot.send_message(
+                chat_id=config.telegram_channel_id,
+                text=digest_html,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+                reply_markup=keyboard_builder.as_markup()
+            )
+            logger.info("✅ Ежедневный дайджест опубликован")
+        except Exception as e:
+            logger.error(f"❌ Ошибка публикации дайджеста: {e}")
+
+
+@safe_task("Weekly Digest")
+async def weekly_digest_task():
+    """Еженедельный дайджест (за 7 дней)"""
+    logger.info("📅 Запуск генерации недельного дайджеста...")
+    news_list = await db.get_news_for_period(hours=24*7, min_priority=6) # Только очень важные
+    
+    logger.info(f"📊 Найдены новости для Weekly Digest: {len(news_list)}")
+    
+    if len(news_list) < 5:
+        logger.info("⚠️ Мало важных новостей для недельного дайджеста (<5), пропускаем.")
+        return
+
+    digest_html = await ai_analyzer.generate_digest(news_list, period_name="неделю")
+    
+    if digest_html:
+        try:
+             # Получаем шаблон футера
+            footer = await db.get_setting("footer_template", "")
+            if footer:
+                digest_html += f"\n\n{footer}"
+                
+            # ✅ НОВОЕ: Кнопки для дайджеста
+            keyboard_builder = InlineKeyboardBuilder()
+            keyboard_builder.button(text="💬 Открытый общий чат", url="https://t.me/+514GO2tFjAtkMWRi")
+            keyboard_builder.button(text="📢 Подписаться", url="https://t.me/blexler_invest")
+            keyboard_builder.adjust(1)
+            
+            await bot.send_message(
+                chat_id=config.telegram_channel_id,
+                text=digest_html,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+                reply_markup=keyboard_builder.as_markup()
+            )
+            logger.info("✅ Недельный дайджест опубликован")
+        except Exception as e:
+            logger.error(f"❌ Ошибка публикации дайджеста: {e}")
 
 
 # === БЕЗОПАСНЫЙ ЗАПУСК LISTENER ===
