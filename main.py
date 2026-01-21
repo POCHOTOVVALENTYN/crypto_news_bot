@@ -126,11 +126,18 @@ async def cmd_health(message):
 
 
 
-# Импорт роутеров
-from handlers import admin_menu
 
-dp.include_router(admin_menu.router)
-dp.include_router(router)
+# Импорт роутеров
+from handlers import admin_menu, user_start, user_menu, payments, ai_chat
+
+# Регистрация роутеров (порядок важен!)
+dp.include_router(admin_menu.router)   # Админ-команды (высший приоритет)
+dp.include_router(user_start.router)   # /start, /help
+dp.include_router(payments.router)     # Платежи и воронка продаж
+dp.include_router(ai_chat.router)      # AI-чат (с FSM states)
+dp.include_router(user_menu.router)    # Кнопки меню
+dp.include_router(router)              # Общие команды (stats, sources, health)
+
 
 
 # === ГЛАВНАЯ ФУНКЦИЯ ===

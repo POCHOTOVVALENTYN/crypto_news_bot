@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     parse_interval: int = Field(300, ge=60, le=3600, description="RSS parsing interval (seconds)")
     filter_enabled: bool = Field(True, description="Enable content filtering")
 
+    # === PREMIUM & PAYMENTS ===
+    channel_premium_id: int = Field(-1001773544621, description="Premium channel ID")
+    premium_price_full: int = Field(500, description="Полная цена Premium в звёздах")
+    premium_price_discount: int = Field(400, description="Скидочная цена Premium в звёздах")
+    premium_duration_days: int = Field(30, description="Длительность подписки в днях")
+
     # === LOGGING ===
     log_level: str = Field("INFO", description="Logging level")
 

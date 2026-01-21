@@ -83,6 +83,45 @@ async def show_statistics(message: Message):
     await message.answer(text, parse_mode="HTML")
 
 
+# --- АНАЛИТИКА ПРОДАЖ ---
+@router.message(Command("sales"), F.from_user.id == int(ADMIN_ID))
+async def cmd_sales_analytics(message: Message):
+    """Подробная аналитика продаж и воронки"""
+    try:
+        sales_stats = await db.get_sales_analytics()
+        user_stats = await db.get_user_statistics()
+        
+        text = (
+            "💰 <b>Аналитика продаж:</b>\n\n"
+            
+            f"👥 <b>Пользователи:</b>\n"
+            f"• Всего: {user_stats.get('total_users', 0)}\n"
+            f"• Бесплатные: {user_stats.get('free_users', 0)}\n"
+            f"• Premium: {user_stats.get('premium_users', 0)}\n\n"
+            
+            f"📊 <b>Воронка продаж:</b>\n"
+            f"• Показов оффера: {sales_stats.get('total_offers_shown', 0)}\n"
+            f"• Возражений по цене: {sales_stats.get('price_objections', 0)}\n"
+            f"• Конверсия в возражение: {round(sales_stats.get('price_objections', 0) / max(sales_stats.get('total_offers_shown', 1), 1) * 100, 1)}%\n\n"
+            
+            f"💵 <b>Продажи:</b>\n"
+            f"• По полной цене (500⭐️): {sales_stats.get('full_price_sales', 0)}\n"
+            f"• Со скидкой (400⭐️): {sales_stats.get('discount_sales', 0)}\n"
+            f"• Всего продаж: {sales_stats.get('full_price_sales', 0) + sales_stats.get('discount_sales', 0)}\n\n"
+            
+            f"📈 <b>Метрики:</b>\n"
+            f"• Общий доход: {sales_stats.get('total_revenue', 0)} ⭐️\n"
+            f"• Средний чек: {sales_stats.get('average_check', 0)} ⭐️\n"
+            f"• Конверсия воронки: {sales_stats.get('conversion_rate', 0)}%\n"
+            f"• Процент скидок: {sales_stats.get('discount_usage_rate', 0)}%\n"
+        )
+        
+        await message.answer(text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Ошибка получения аналитики продаж: {e}")
+        await message.answer(f"⚠️ Ошибка получения аналитики: {e}")
+
+
 # --- РУЧНАЯ ПУБЛИКАЦИЯ ---
 @router.message(F.text == "📝 Создать публикацию", F.from_user.id == int(ADMIN_ID))
 async def start_publication(message: Message, state: FSMContext):
