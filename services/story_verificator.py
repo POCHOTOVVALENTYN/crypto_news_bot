@@ -7,7 +7,7 @@ from typing import Dict, Optional
 from io import BytesIO
 
 from loader import bot
-from services.ai_manager import AIProviderManager
+from services.ai.manager import AIProviderManager
 
 logger = logging.getLogger(__name__)
 

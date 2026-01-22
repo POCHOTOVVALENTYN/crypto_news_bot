@@ -7,7 +7,7 @@ import logging
 from typing import Dict, List
 from statistics import median, stdev
 
-from services.ai_manager import AIProviderManager
+from services.ai.manager import AIProviderManager
 
 logger = logging.getLogger(__name__)
 

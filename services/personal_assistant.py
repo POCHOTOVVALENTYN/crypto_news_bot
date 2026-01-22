@@ -6,7 +6,7 @@ import logging
 from typing import Optional
 from datetime import datetime
 
-from services.ai_manager import AIProviderManager
+from services.ai.manager import AIProviderManager
 from database import db
 
 logger = logging.getLogger(__name__)
@@ -42,9 +42,10 @@ class PersonalAssistant:
         try:
             # Используем БД для получения последних новостей
             from datetime import timedelta
+            import aiosqlite
+            
             date_from = (datetime.now() - timedelta(days=1)).isoformat()
             
-            async import aiosqlite
             async with aiosqlite.connect(db.db_path) as conn:
                 async with conn.execute(
                     """SELECT title, summary, priority 
