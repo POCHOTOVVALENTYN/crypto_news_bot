@@ -236,3 +236,49 @@ async def premium_support(message: Message):
         "⚡️ Обычно отвечаем в течение 2-4 часов",
         parse_mode="HTML"
     )
+
+
+# === КОНСУЛЬТАЦИИ ===
+
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice, CallbackQuery
+
+@router.message(F.text == "💼 Консультация")
+async def handle_consultation_request(message: Message):
+    """Запрос платной консультации"""
+    await message.answer(
+        "💼 <b>Личная консультация</b>\n\n"
+        "📋 <b>Что входит:</b>\n"
+        "• Детальный разбор портфеля\n"
+        "• Персональные рекомендации\n"
+        "• Стратегия на месяц\n"
+        "• Ответы на все вопросы\n\n"
+        "⏱ <b>Длительность:</b> 60 минут\n"
+        "💰 <b>Стоимость:</b> 27,000 ⭐️ (~$300)\n\n"
+        "Готовы заказать?",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить", callback_data="buy_consultation")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
+        ])
+    )
+
+
+@router.callback_query(F.data == "buy_consultation")
+async def process_consultation_payment(callback: CallbackQuery):
+    """Обработка покупки консультации"""
+    user_id = callback.from_user.id
+    
+    try:
+        await callback.message.answer_invoice(
+            title="💼 Личная консультация",
+            description="60-минутная консультация: разбор портфеля, стратегия, рекомендации",
+            payload=f"consultation_{user_id}",
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice(label="Консультация (60 мин)", amount=27000)]
+        )
+        await callback.answer("💳 Счёт отправлен")
+        logger.info(f"💼 Запрос консультации: {user_id}")
+    except Exception as e:
+        logger.error(f"Ошибка invoice консультации: {e}")
+        await callback.answer("⚠️ Ошибка", show_alert=True)

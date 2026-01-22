@@ -138,7 +138,7 @@ async def cmd_health(message):
 
 
 # Импорт роутеров
-from handlers import admin_menu, user_start, user_menu, payments, ai_chat
+from handlers import admin_menu, user_start, user_menu, payments, ai_chat, gamification, admin_dashboard
 
 # Импорт middleware
 from middlewares.subscription_check import SubscriptionCheckMiddleware
@@ -148,12 +148,14 @@ dp.message.middleware(SubscriptionCheckMiddleware())
 logger.info("✅ Subscription check middleware зарегистрирован")
 
 # Регистрация роутеров (порядок важен!)
-dp.include_router(admin_menu.router)   # Админ-команды (высший приоритет)
-dp.include_router(user_start.router)   # /start, /help
-dp.include_router(payments.router)     # Платежи и воронка продаж
-dp.include_router(ai_chat.router)      # AI-чат (с FSM states)
-dp.include_router(user_menu.router)    # Кнопки меню
-dp.include_router(router)              # Общие команды (stats, sources, health)
+dp.include_router(admin_menu.router)       # Админ-команды (высший приоритет)
+dp.include_router(admin_dashboard.router)  # Админ-dashboard
+dp.include_router(user_start.router)       # /start, /help
+dp.include_router(payments.router)         # Платежи и воронка продаж
+dp.include_router(ai_chat.router)          # AI-чат (с FSM states)
+dp.include_router(gamification.router)     # Геймификация (лидерборд, XP)
+dp.include_router(user_menu.router)        # Кнопки меню
+dp.include_router(router)                  # Общие команды (stats, sources, health)
 
 
 
@@ -238,6 +240,29 @@ async def main():
             id="subscription_check",
             name="Subscription Expiry Check"
         )
+        
+        # Авто-дожим продаж каждый час
+        from services.sales_followup import check_abandoned_purchases
+        scheduler.add_job(
+            check_abandoned_purchases,
+            IntervalTrigger(hours=1),
+            id="sales_followup",
+            name="Sales Follow-up"
+        )
+        logger.info("✅ Авто-дожим настроен")
+        
+        # Личный планировщик в 8:00
+        from services.personal_assistant import personal_assistant
+        
+        async def send_daily_plan():
+            try:
+                plan = await personal_assistant.generate_daily_plan()
+                await bot.send_message(config.admin_id, f"📋 <b>План на день</b>\n\n{plan}", parse_mode="HTML")
+            except Exception as e:
+                logger.error(f"Ошибка плана: {e}")
+        
+        scheduler.add_job(send_daily_plan, CronTrigger(hour=8, minute=0), id="daily_plan", name="Daily Plan")
+        logger.info("✅ Планировщик настроен")
         
         scheduler.start()
         logger.info("✅ Планировщик запущен")

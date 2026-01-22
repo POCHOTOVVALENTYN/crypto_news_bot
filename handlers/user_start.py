@@ -21,6 +21,24 @@ async def cmd_start(message: Message, state: FSMContext):
     # Очищаем любые активные состояния
     await state.clear()
     
+    # 🌳 РЕФЕРАЛЬНАЯ СИСТЕМА: парсим /start ref=REFERRER_ID
+    referrer_id = None
+    try:
+        args = message.text.split()
+        if len(args) > 1:
+            ref_param = args[1]
+            
+            # Поддерживаем форматы: ref=123 или просто 123
+            if ref_param.startswith("ref="):
+                referrer_id = int(ref_param.split("=")[1])
+            elif ref_param.isdigit():
+                referrer_id = int(ref_param)
+            
+            if referrer_id and referrer_id != user_id:
+                logger.debug(f"📎 Реферальный параметр: {user_id} от {referrer_id}")
+    except Exception as e:
+        logger.debug(f"Ошибка парсинга реферального параметра: {e}")
+    
     # Проверяем/регистрируем пользователя
     user = await db.get_user(user_id)
     if not user:
@@ -28,6 +46,29 @@ async def cmd_start(message: Message, state: FSMContext):
         await db.add_user(user_id, username, full_name)
         user = await db.get_user(user_id)
         logger.info(f"🆕 Новый пользователь: {user_id} (@{username})")
+        
+        # Если есть реферальная ссылка - создаём связь
+        if referrer_id:
+            success = await db.add_referral(referrer_id, user_id)
+            
+            if success:
+                # Начисляем XP всей цепочке (MLM)
+                await db.calculate_referral_rewards(user_id)
+                
+                # Уведомляем пригласившего
+                try:
+                    ref_count = await db.get_referral_count(referrer_id)
+                    await message.bot.send_message(
+                        referrer_id,
+                        f"🎉 Друг присоединился!\n\n"
+                        f"✨ +50 XP за приглашение\n\n"
+                        f"У вас теперь {ref_count} рефералов. "
+                        f"Пригласите еще {max(0, 10 - ref_count)} и получите Premium на 12 дней!"
+                    )
+                except:
+                    pass
+                
+                logger.info(f"📎 Реферальная связь: {referrer_id} → {user_id}")
     
     # Проверяем подписку
     is_premium = await db.check_subscription(user_id)
@@ -46,7 +87,7 @@ async def cmd_start(message: Message, state: FSMContext):
         await message.answer(
             f"👋 <b>Привет, {full_name}!</b>\n\n"
             f"Добро пожаловать в крипто-бот BLEXLER!\n\n"
-            f"📰 Здесь вы можете  подключить Premium-доступ💎 с эксклюзивными функциями\n\n"
+            f"📰 Здесь вы можете подключить Premium-доступ💎 с эксклюзивными функциями\n\n"
             f"Используйте меню ниже 👇",
             parse_mode="HTML",
             reply_markup=get_free_menu()

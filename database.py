@@ -153,12 +153,49 @@ class NewsDatabase:
                                  referred_id INTEGER NOT NULL,
                                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                                  reward_given BOOLEAN DEFAULT 0,
+                                 referral_depth INTEGER DEFAULT 1,
                                  
                                  FOREIGN KEY (referrer_id) REFERENCES users(user_id),
                                  FOREIGN KEY (referred_id) REFERENCES users(user_id),
                                  UNIQUE(referrer_id, referred_id)
                              )
                              """)
+            
+            # Таблица активностей пользователей (для геймификации)
+            await db.execute("""
+                             CREATE TABLE IF NOT EXISTS user_activities
+                             (
+                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                 user_id INTEGER NOT NULL,
+                                 activity_type TEXT NOT NULL,  -- 'read_post', 'share', 'referral', 'story_check', 'purchase'
+                                 xp_earned INTEGER DEFAULT 0,
+                                 metadata TEXT,  -- JSON для дополнительных данных
+                                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                 
+                                 FOREIGN KEY (user_id) REFERENCES users(user_id)
+                             )
+                             """)
+            
+            # Миграции для геймификации
+            try:
+                async with db.execute("PRAGMA table_info(users)") as cursor:
+                    columns = [row[1] for row in await cursor.fetchall()]
+                    
+                    if 'xp' not in columns:
+                        await db.execute("ALTER TABLE users ADD COLUMN xp INTEGER DEFAULT 0")
+                        logger.info("✅ Добавлена колонка xp в таблицу users")
+                    
+                    if 'level' not in columns:
+                        await db.execute("ALTER TABLE users ADD COLUMN level INTEGER DEFAULT 1")
+                        logger.info("✅ Добавлена колонка level в таблицу users")
+                    
+                    if 'last_activity' not in columns:
+                        await db.execute("ALTER TABLE users ADD COLUMN last_activity DATETIME")
+                        logger.info("✅ Добавлена колонка last_activity в таблицу users")
+                    
+                    await db.commit()
+            except Exception as e:
+                logger.debug(f"⚠️ Миграция геймификации: {e}")
             
             await db.commit()
 
@@ -591,6 +628,27 @@ class NewsDatabase:
                 stats['discount_usage_rate'] = 0
             
             return stats
+    
+    async def get_abandoned_funnel_users(self, hours: int = 2) -> List[Dict]:
+        """Получить пользователей, застрявших в воронке"""
+        from datetime import datetime, timedelta
+        cutoff_time = (datetime.now() - timedelta(hours=hours)).isoformat()
+        
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    """SELECT user_id, last_step, happened_at
+                       FROM funnel_stats
+                       WHERE last_step IN ('offer_shown', 'price_objection')
+                       AND happened_at < ?
+                       ORDER BY happened_at ASC LIMIT 50""",
+                    (cutoff_time,)
+                ) as cursor:
+                    return [dict(row) for row in await cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Ошибка get_abandoned_funnel_users: {e}")
+            return []
 
 
     # === МЕТОДЫ РЕФЕРАЛЬНОЙ СИСТЕМЫ ===
@@ -626,8 +684,28 @@ class NewsDatabase:
             logger.error(f"Ошибка получения количества рефералов: {e}")
             return 0
     
-    async def give_referral_bonus(self, referrer_id: int, referred_id: int, bonus_days: int = 7):
-        """Даёт бонус реферреру когда реферал покупает Premium"""
+    async def get_top_referrers(self, limit: int = 10) -> List[Dict]:
+        """Получить топ рефереров для админ dashboard"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    """SELECT r.referrer_id, u.username, u.full_name, COUNT(*) as referral_count
+                       FROM referrals r
+                       JOIN users u ON r.referrer_id = u.user_id
+                       GROUP BY r.referrer_id
+                       ORDER BY referral_count DESC
+                       LIMIT ?""",
+                    (limit,)
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Ошибка получения топ рефереров: {e}")
+            return []
+    
+    async def give_referral_bonus(self, referrer_id: int, referred_id: int, bonus_days: int = 12):
+        """Даёт бонус реферреру когда реферал покупает Premium (10-15 дней)"""
         from datetime import datetime, timedelta
         
         try:
@@ -670,6 +748,431 @@ class NewsDatabase:
         except Exception as e:
             logger.error(f"Ошибка выдачи реферального бонуса: {e}", exc_info=True)
             return False
+    
+    async def get_referral_tree(self, user_id: int, max_depth: int = 3) -> List[Dict]:
+        """Построить дерево рефералов с глубиной"""
+        referrals = []
+        
+        async def fetch_level(parent_id: int, depth: int):
+            if depth > max_depth:
+                return
+            
+            try:
+                async with aiosqlite.connect(self.db_path) as db:
+                    db.row_factory = aiosqlite.Row
+                    async with db.execute(
+                        """SELECT r.referred_id, u.username, u.full_name, u.status, r.created_at
+                           FROM referrals r
+                           JOIN users u ON r.referred_id = u.user_id
+                           WHERE r.referrer_id = ?""",
+                        (parent_id,)
+                    ) as cursor:
+                        for row in await cursor.fetchall():
+                            ref = dict(row)
+                            ref['depth'] = depth
+                            referrals.append(ref)
+                            
+                            # Рекурсивно получаем рефералов следующего уровня
+                            await fetch_level(ref['referred_id'], depth + 1)
+            except Exception as e:
+                logger.error(f"Ошибка получения дерева рефералов: {e}")
+        
+        await fetch_level(user_id, 1)
+        return referrals
+    
+    async def calculate_referral_rewards(self, new_user_id: int):
+        """Начислить XP всем в цепочке вверх при регистрации реферала"""
+        try:
+            # Получаем того, кто пригласил
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute(
+                    "SELECT referrer_id FROM referrals WHERE referred_id = ?",
+                    (new_user_id,)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if not row:
+                        return
+                    
+                    referrer_id = row[0]
+            
+            # Level 1: прямой реферал → +50 XP
+            await self.log_activity(
+                referrer_id,
+                'referral',
+                xp_amount=50,
+                metadata={'referred_user': new_user_id, 'depth': 1}
+            )
+            
+            # Ищем цепочку выше (Level 2 и 3)
+            current_id = referrer_id
+            for depth in [2, 3]:
+                async with aiosqlite.connect(self.db_path) as db:
+                    async with db.execute(
+                        "SELECT referrer_id FROM referrals WHERE referred_id = ?",
+                        (current_id,)
+                    ) as cursor:
+                        row = await cursor.fetchone()
+                        if not row:
+                            break
+                        
+                        parent_id = row[0]
+                
+                # Level 2 → +25 XP, Level 3 → +10 XP
+                xp_amounts = {2: 25, 3: 10}
+                await self.log_activity(
+                    parent_id,
+                    'referral',
+                    xp_amount=xp_amounts[depth],
+                    metadata={'referred_user': new_user_id, 'depth': depth}
+                )
+                
+                current_id = parent_id
+            
+            logger.info(f"🌳 MLM rewards calculated for referral chain of user {new_user_id}")
+            
+        except Exception as e:
+            logger.error(f"Ошибка расчёта MLM наград: {e}", exc_info=True)
+    
+    async def check_premium_bonus_eligibility(self, user_id: int) -> Dict:
+        """Проверяет право на Premium бонус за 10 активных рефералов"""
+        try:
+            # Получаем всех Level 1 рефералов
+            tree = await self.get_referral_tree(user_id, max_depth=1)
+            level1_refs = [r for r in tree if r['depth'] == 1]
+            
+            # Считаем активных (купили Premium)
+            active_count = sum(1 for r in level1_refs if r['status'] == 'premium')
+            
+            # Проверяем не был ли уже выдан бонус
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute(
+                    "SELECT COUNT(*) FROM user_activities WHERE user_id=? AND activity_type='referral_bonus_premium'",
+                    (user_id,)
+                ) as cursor:
+                    bonus_given = (await cursor.fetchone())[0] > 0
+            
+            eligible = active_count >= 10 and not bonus_given
+            
+            return {
+                'eligible': eligible,
+                'total_referrals': len(level1_refs),
+                'active_referrals': active_count,
+                'bonus_given': bonus_given,
+                'needed': max(0, 10 - active_count)
+            }
+        except Exception as e:
+            logger.error(f"Ошибка проверки права на Premium бонус: {e}", exc_info=True)
+            return {'eligible': False}
+    
+    async def grant_referral_premium_bonus(self, user_id: int, bonus_days: int = 12):
+        """Выдать Premium на 10-15 дней за 10 активных рефералов"""
+        from datetime import datetime, timedelta
+        
+        try:
+            # Проверяем право
+            eligibility = await self.check_premium_bonus_eligibility(user_id)
+            if not eligibility['eligible']:
+                return False
+            
+            # Выдаём Premium
+            user = await self.get_user(user_id)
+            if user and user['status'] == 'premium' and user['subscription_end']:
+                current_end = datetime.fromisoformat(user['subscription_end'])
+                new_end = current_end + timedelta(days=bonus_days)
+            else:
+                new_end = datetime.now() + timedelta(days=bonus_days)
+            
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "UPDATE users SET subscription_end=?, status='premium' WHERE user_id=?",
+                    (new_end.isoformat(), user_id)
+                )
+                await db.commit()
+            
+            # Логируем бонус
+            await self.log_activity(
+                user_id,
+                'referral_bonus_premium',
+                xp_amount=500,  # Большой бонус за достижение
+                metadata={'bonus_days': bonus_days}
+            )
+            
+            logger.info(f"🎁💎 Premium бонус за рефералов выдан: {user_id} (+{bonus_days} дней)")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Ошибка выдачи Premium бонуса: {e}", exc_info=True)
+            return False
+    
+    async def get_referrer(self, user_id: int) -> Optional[Dict]:
+        """Получить того, кто пригласил пользователя (Level 1)"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT referrer_id FROM referrals WHERE referred_id = ?",
+                    (user_id,)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    return {'referrer_id': row[0]} if row else None
+        except Exception as e:
+            logger.error(f"Ошибка получения реферрера: {e}", exc_info=True)
+            return None
+    
+    async def count_user_story_checks(self, user_id: int, date: str = None) -> int:
+        """Подсчитать количество проверок Stories за день"""
+        from datetime import datetime
+        
+        if not date:
+            date = datetime.now().date().isoformat()
+        
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute(
+                    """SELECT COUNT(*) FROM user_activities 
+                       WHERE user_id = ? 
+                       AND activity_type = 'story_check'
+                       AND DATE(created_at) = ?""",
+                    (user_id, date)
+                ) as cursor:
+                    return (await cursor.fetchone())[0]
+        except Exception as e:
+            logger.error(f"Ошибка подсчёта Stories проверок: {e}", exc_info=True)
+            return 0
+    
+    async def get_user_story_history(self, user_id: int, limit: int = 10) -> List[Dict]:
+        """Получить историю проверок Stories пользователя"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    """SELECT created_at, xp_earned, metadata
+                       FROM user_activities
+                       WHERE user_id = ? AND activity_type = 'story_check'
+                       ORDER BY created_at DESC
+                       LIMIT ?""",
+                    (user_id, limit)
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Ошибка получения истории Stories: {e}")
+            return []
+    
+    async def create_badges_table(self):
+        """Создать таблицу бейджей достижений"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS user_badges (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        badge_type TEXT NOT NULL,
+                        earned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users(user_id),
+                        UNIQUE(user_id, badge_type)
+                    )
+                """)
+                await db.commit()
+        except Exception as e:
+            logger.error(f"Ошибка создания таблицы бейджей: {e}")
+    
+    async def award_badge(self, user_id: int, badge_type: str) -> bool:
+        """Выдать бейдж пользователю"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "INSERT OR IGNORE INTO user_badges (user_id, badge_type) VALUES (?, ?)",
+                    (user_id, badge_type)
+                )
+                await db.commit()
+                logger.info(f"🏅 Бейдж выдан: {user_id} - {badge_type}")
+                return True
+        except Exception as e:
+            logger.error(f"Ошибка выдачи бейджа: {e}")
+            return False
+    
+    async def get_user_badges(self, user_id: int) -> List[str]:
+        """Получить список бейджей пользователя"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute(
+                    "SELECT badge_type FROM user_badges WHERE user_id = ?",
+                    (user_id,)
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    return [row[0] for row in rows]
+        except Exception as e:
+            logger.error(f"Ошибка получения бейджей: {e}")
+            return []
+    
+    async def check_and_award_badges(self, user_id: int):
+        """Проверить условия и выдать бейджи автоматически"""
+        user = await self.get_user(user_id)
+        if not user:
+            return
+        
+        # Level badges
+        level = user.get('level', 1)
+        if level >= 5:
+            await self.award_badge(user_id, 'level_5')
+        if level >= 10:
+            await self.award_badge(user_id, 'level_10_champion')
+        
+        # Referral badges
+        ref_count = await self.get_referral_count(user_id)
+        if ref_count >= 10:
+            await self.award_badge(user_id, 'referrer_10')
+        if ref_count >= 50:
+            await self.award_badge(user_id, 'referrer_50')
+        
+        # Premium badge
+        if user.get('status') == 'premium':
+            await self.award_badge(user_id, 'premium_member')
+        
+        # Story checker
+        story_count = await db.execute(
+            "SELECT COUNT(*) FROM user_activities WHERE user_id=? AND activity_type='story_check'",
+            (user_id,)
+        )
+        if story_count and (await story_count.fetchone())[0] >= 10:
+            await self.award_badge(user_id, 'story_hunter')
+
+
+
+    # === МЕТОДЫ ГЕЙМИФИКАЦИИ ===
+    
+    # Константы уровней
+    LEVEL_THRESHOLDS = {
+        1: 0,
+        2: 100,
+        3: 300,
+        4: 600,
+        5: 1000,
+        6: 1500,
+        7: 2200,
+        8: 3000,
+        9: 4000,
+        10: 5000
+    }
+    
+    # XP за активности
+    XP_REWARDS = {
+        'read_post': 5,
+        'referral': 50,
+        'referral_purchase': 200,
+        'story_check': 100,
+        'share_20': 150,
+        'purchase': 100
+    }
+    
+    async def add_xp(self, user_id: int, amount: int, activity: str, metadata: dict = None) -> Dict:
+        """Добавляет XP пользователю и проверяет повышение уровня"""
+        import json
+        from datetime import datetime
+        
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # Получаем текущий XP и уровень
+                async with db.execute(
+                    "SELECT xp, level FROM users WHERE user_id = ?",
+                    (user_id,)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if not row:
+                        logger.warning(f"User {user_id} not found for XP")
+                        return {'level_up': False}
+                    
+                    current_xp, current_level = row
+                    new_xp = current_xp + amount
+                
+                # Проверяем повышение уровня
+                new_level = current_level
+                for level, threshold in sorted(self.LEVEL_THRESHOLDS.items()):
+                    if new_xp >= threshold:
+                        new_level = level
+                
+                level_up = new_level > current_level
+                
+                # Обновляем XP и уровень
+                await db.execute(
+                    """UPDATE users 
+                       SET xp = ?, level = ?, last_activity = ?
+                       WHERE user_id = ?""",
+                    (new_xp, new_level, datetime.now().isoformat(), user_id)
+                )
+                
+                # Логируем активность
+                metadata_str = json.dumps(metadata, ensure_ascii=False) if metadata else None
+                await db.execute(
+                    """INSERT INTO user_activities 
+                       (user_id, activity_type, xp_earned, metadata)
+                       VALUES (?, ?, ?, ?)""",
+                    (user_id, activity, amount, metadata_str)
+                )
+                
+                await db.commit()
+            
+            result = {
+                'xp_earned': amount,
+                'new_xp': new_xp,
+                'new_level': new_level,
+                'level_up': level_up
+            }
+            
+            if level_up:
+                logger.info(f"🎉 Level UP! User {user_id}: {current_level} → {new_level}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Ошибка добавления XP: {e}", exc_info=True)
+            return {'level_up': False}
+    
+    async def get_leaderboard(self, limit: int = 10) -> List[Dict]:
+        """Возвращает топ пользователей по XP"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    """SELECT user_id, username, full_name, xp, level
+                       FROM users
+                       WHERE xp > 0
+                       ORDER BY xp DESC
+                       LIMIT ?""",
+                    (limit,)
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Ошибка получения лидерборда: {e}", exc_info=True)
+            return []
+    
+    async def get_user_rank(self, user_id: int) -> Optional[int]:
+        """Возвращает позицию пользователя в рейтинге"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute(
+                    """SELECT COUNT(*) + 1 as rank
+                       FROM users
+                       WHERE xp > (SELECT xp FROM users WHERE user_id = ?)""",
+                    (user_id,)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    return row[0] if row else None
+        except Exception as e:
+            logger.error(f"Ошибка получения ранга: {e}", exc_info=True)
+            return None
+    
+    async def log_activity(self, user_id: int, activity_type: str, xp_amount: int = None, metadata: dict = None):
+        """Логирует активность и автоматически начисляет XP"""
+        if xp_amount is None:
+            xp_amount = self.XP_REWARDS.get(activity_type, 0)
+        
+        if xp_amount > 0:
+            return await self.add_xp(user_id, xp_amount, activity_type, metadata)
+        
+        return {'level_up': False}
 
 
 

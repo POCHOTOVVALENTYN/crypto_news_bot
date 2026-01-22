@@ -250,12 +250,32 @@ async def process_successful_payment(message: Message):
             f"discount={discount_used} | uuid={payment_uuid}"
         )
         
+        # 🎮 ГЕЙМИФИКАЦИЯ: начисляем XP за покупку
+        xp_result = await db.log_activity(user_id, 'purchase', metadata={
+            'amount': price,
+            'discount': discount_used
+        })
+        
         # Отправляем поздравление и переключаем на Premium-меню
-        await message.answer(
+        congrats_text = (
             "🎉 <b>Поздравляю! Premium активирован!</b>\n\n"
             f"Ваша подписка активна на {config.premium_duration_days} дней.\n"
             f"Теперь вам доступны все премиум-функции.\n\n"
-            "Используйте меню ниже для навигации. 👇",
+        )
+        
+        # Добавляем информацию о level up
+        if xp_result.get('level_up'):
+            congrats_text += (
+                f"🎊 <b>Level UP!</b> Вы достигли {xp_result['new_level']} уровня!\n"
+                f"✨ +{xp_result['xp_earned']} XP\n\n"
+            )
+        else:
+            congrats_text += f"✨ +{xp_result.get('xp_earned', 100)} XP\n\n"
+        
+        congrats_text += "Используйте меню ниже для навигации. 👇"
+        
+        await message.answer(
+            congrats_text,
             parse_mode="HTML",
             reply_markup=get_premium_menu()
         )
@@ -266,6 +286,45 @@ async def process_successful_payment(message: Message):
             f"charge_id={payment_info.telegram_payment_charge_id}, "
             f"uuid={payment_uuid}"
         )
+        
+        # 🎁 АВТО-ПРОВЕРКА РЕФЕРАЛЬНОГО БОНУСА
+        # Если пользователь был приглашён - проверяем право пригласителя на Premium бонус
+        try:
+            referrer_info = await db.get_referrer(user_id)
+            if referrer_info:
+                referrer_id = referrer_info['referrer_id']
+                
+                # Начисляем XP рефрреру за покупку Premium его рефералом
+                await db.log_activity(
+                    referrer_id,
+                    'referral_purchase',
+                    metadata={'referred_user': user_id, 'amount': price}
+                )
+                
+                # Проверяем право на Premium бонус
+                eligibility = await db.check_premium_bonus_eligibility(referrer_id)
+                
+                if eligibility['eligible']:
+                    # Выдаём Premium бонус
+                    success = await db.grant_referral_premium_bonus(referrer_id, bonus_days=12)
+                    
+                    if success:
+                        # Уведомляем пользователя о бонусе
+                        try:
+                            await message.bot.send_message(
+                                referrer_id,
+                                "🎊 <b>ПОЗДРАВЛЯЕМ!</b>\n\n"
+                                "Вы достигли 10 активных рефералов!\n\n"
+                                "🎁 <b>Награда:</b> Premium на 12 дней\n"
+                                "✨ +500 XP бонус\n\n"
+                                "Ваша подписка автоматически активирована!",
+                                parse_mode="HTML"
+                            )
+                            logger.info(f"🎁💎 Premium бонус автоматически выдан: {referrer_id}")
+                        except:
+                            pass
+        except Exception as e:
+            logger.error(f"Ошибка проверки реферального бонуса: {e}", exc_info=True)
         
     except Exception as e:
         logger.error(f"Ошибка обработки успешного платежа: {e}", exc_info=True)
