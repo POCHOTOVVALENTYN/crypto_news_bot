@@ -138,19 +138,20 @@ async def cmd_health(message):
 
 
 # Импорт роутеров
-from handlers import admin_menu, user_start, user_menu, payments, ai_chat, gamification, admin_dashboard
+from handlers import admin_menu, user_start, user_menu, payments, ai_chat, gamification, admin_dashboard, premium_services, premium_purchase, meeting_scheduler, admin_sessions
+
 
 # Импорт middleware
 from middlewares.subscription_check import SubscriptionCheckMiddleware
 
-# 🔒 Регистрация middleware (автоматическая проверка подписок)
-dp.message.middleware(SubscriptionCheckMiddleware())
-logger.info("✅ Subscription check middleware зарегистрирован")
-
-# Регистрация роутеров (порядок важен!)
+# === РЕГИСТРАЦИЯ РОУТЕРОВ ===
 dp.include_router(admin_menu.router)       # Админ-команды (высший приоритет)
 dp.include_router(admin_dashboard.router)  # Админ-dashboard
+dp.include_router(admin_sessions.router)   # Админ-управление сессиями
 dp.include_router(user_start.router)       # /start, /help
+dp.include_router(premium_purchase.router) # Premium покупка (приоритет!)
+dp.include_router(premium_services.router) # Premium-услуги (Relay Mode)
+dp.include_router(meeting_scheduler.router) # Планирование встреч
 dp.include_router(payments.router)         # Платежи и воронка продаж
 dp.include_router(ai_chat.router)          # AI-чат (с FSM states)
 dp.include_router(gamification.router)     # Геймификация (лидерборд, XP)
@@ -264,6 +265,9 @@ async def main():
         scheduler.add_job(send_daily_plan, CronTrigger(hour=8, minute=0), id="daily_plan", name="Daily Plan")
         logger.info("✅ Планировщик настроен")
         
+        # ✅ НОВОЕ: Регистрация дополнительных задач (эскалация, напоминания)
+        from services.scheduler_additional import register_additional_jobs
+        register_additional_jobs(scheduler)
         scheduler.start()
         logger.info("✅ Планировщик запущен")
 
@@ -312,21 +316,20 @@ async def main():
                         pass
 
         # Остановка планировщика
-        if scheduler.running:
-            scheduler.shutdown(wait=False)
-            logger.info("✅ Планировщик остановлен")
-
-        # Остановка Userbot
-        if listener.is_running:
-            await listener.stop()
-
-        # Закрытие БД
-        await db.close()
-
-        # Закрытие бота
-        await bot.session.close()
-        logger.info("✅ Bot session закрыт")
-
+        logger.info("🧹 Очистка ресурсов...")
+        scheduler.shutdown(wait=False)
+        logger.info("✅ Планировщик остановлен")
+        
+        # Закрыть соединение с БД
+        if db.conn:
+            await db.conn.close()
+            logger.info("✅ БД соединение закрыто")
+        
+        # Остановить userbot
+        if listener.client:
+            await listener.client.disconnect()
+            logger.info("✅ Bot session закрыт")
+        
         logger.info("=" * 60)
         logger.info("👋 БОТ ОСТАНОВЛЕН")
         logger.info("=" * 60)
@@ -336,7 +339,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Завершение по Ctrl+C")
+        logger.info("Получен сигнал прерывания")
     except Exception as e:
-        logger.critical(f"Фатальная ошибка: {e}", exc_info=True)
+        logger.critical(f"Критическая ошибка при запуске: {e}", exc_info=True)
         sys.exit(1)

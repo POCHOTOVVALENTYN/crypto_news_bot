@@ -14,9 +14,10 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
-@router.message(F.text == "🏆 Лидерборд")
+@router.message(F.text == "🏆 Топ Участников")
+@router.message(F.text == "🏆 Лидерборд")  # Обратная совместимость
 async def show_leaderboard(message: Message):
-    """Показать топ-10 пользователей"""
+    """Показать топ-10 участников розыгрыша"""
     user_id = message.from_user.id
     
     # Получаем топ-10
@@ -31,7 +32,7 @@ async def show_leaderboard(message: Message):
     user = await db.get_user(user_id)
     
     # Формируем сообщение
-    text = "🏆 <b>Лидерборд - Топ 10</b>\n\n"
+    text = "🏆 <b>Топ Участников Розыгрыша</b>\n\n"
     
     medals = {1: "🥇", 2: "🥈", 3: "🥉"}
     
@@ -273,9 +274,10 @@ async def share_referral_link(message: Message):
 
 # === ИСТОРИЯ STORIES ===
 
-@router.message(F.text == "📜 История Stories")
+@router.message(F.text == "📜 История Проверок")
+@router.message(F.text == "📜 История Stories")  # Обратная совместимость
 async def show_story_history(message: Message):
-    """Показать историю проверок Stories"""
+    """История проверок Stories"""
     user_id = message.from_user.id
     
     history = await db.get_user_story_history(user_id, limit=10)
@@ -329,9 +331,10 @@ BADGE_NAMES = {
     'trader_pro': '📈 Профи Трейдер'
 }
 
-@router.message(F.text == "🏅 Мои Бейджи")
-async def show_user_badges(message: Message):
-    """Показать бейджи пользователя"""
+@router.message(F.text == "🏅 Мои Достижения")
+@router.message(F.text == "🏅 Мои Бейджи")  # Обратная совместимость
+async def show_badges(message: Message):
+    """Показать достижения пользователя"""
     user_id = message.from_user.id
     
     # Проверяем и выдаём новые бейджи

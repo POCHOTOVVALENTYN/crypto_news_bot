@@ -5,6 +5,60 @@ from pydantic import Field, field_validator, ValidationError
 from pydantic_settings import BaseSettings
 import logging
 
+# === АДМИНИСТРАТОРЫ ===
+ADMIN_IDS = [
+    830196453,   # Валентин
+    304050247,   # BLEXLER (Основатель)
+    1363924657   # Ярослав
+]
+
+ADMIN_NAMES = {
+    830196453: "Валентин",
+    304050247: "BLEXLER",
+    1363924657: "Ярослав"
+}
+
+# Каскад поддержки (порядок эскалации)
+SUPPORT_CASCADE = [
+    304050247,   # 1. Основатель BLEXLER
+    830196453,   # 2. Валентин
+    1363924657   # 3. Ярослав
+]
+
+def is_admin(user_id: int) -> bool:
+    """Проверка прав администратора"""
+    return user_id in ADMIN_IDS
+
+
+# === ЦЕНЫ КОНСУЛЬТАЦИЙ ===
+CONSULTATION_PRICES = {
+    'wallet_review': {
+        'name': '💰 Разбор Кошелька',
+        'usd': 300,
+        'stars': 20500  # ~300 / 0.0146
+    },
+    'vip_consultation': {
+        'name': '💎 VIP-консультация',
+        'usd': 350,
+        'stars': 24000  # ~350 / 0.0146
+    }
+}
+
+# === ЦЕНЫ PREMIUM (ЗА МЕСЯЦ) ===
+PREMIUM_PRICES = {
+    'base': {
+        'usd': 800,
+        'stars': 54800,
+        'period_days': 30
+    },
+    'with_discount': {
+        'usd': 700,
+        'stars': 47900,
+        'period_days': 30,
+        'discount_amount': 100
+    }
+}
+
 
 class Settings(BaseSettings):
     """

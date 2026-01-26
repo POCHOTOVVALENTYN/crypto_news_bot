@@ -1,35 +1,49 @@
+import logging
 from aiogram import Router, F
 from aiogram.types import Message
-from datetime import datetime
-import logging
+from aiogram.fsm.context import FSMContext
 
 from database import db
 from loader import bot
-from config import config
+from keyboards.reply import get_free_menu, get_premium_menu, get_giveaway_menu
 
 router = Router()
 logger = logging.getLogger(__name__)
 
 
-# === ОБРАБОТЧИКИ БЕСПЛАТНОГО МЕНЮ ===
+# === ОБРАБОТЧИКИ ГЛАВНОГО МЕНЮ ===
 
 @router.message(F.text == "🎁 Что внутри Premium?")
 async def show_premium_features(message: Message):
     """Показать функции Premium"""
     await message.answer(
-        "💎 <b>Premium-подписка включает:</b>\n\n"
-        "🤖 <b>AI-клон аналитика Евгения</b>\n"
-        "Общайтесь с личным AI-помощником, который поможет разобраться в рынке\n\n"
-        "🚀 <b>Эксклюзивные сигналы (Futures)</b>\n"
-        "Получайте торговые сигналы по фьючерсам с анализом и точками входа\n\n"
-        "📊 <b>Премиум-аналитика</b>\n"
-        "Глубокий технический и фундаментальный анализ рынка\n\n"
-        "💡 <b>Авторские рекомендации</b>\n"
-        "Личные инсайты и стратегии от Евгения\n\n"
-        "🎓 <b>Обучающий курс</b>\n"
-        "Материалы для развития навыков трейдинга\n\n"
-        "💰 <b>Стоимость:</b> 500 ⭐️ (30 дней)\n\n"
-        "Нажмите <b>\"🌟 Получить Premium-доступ\"</b> для подключения",
+        "💎 <b>PREMIUM-ПОДПИСКА</b>\n\n"
+        "🎯 <b>Эксклюзивный доступ:</b>\n\n"
+        "📊 <b>Premium-сигналы</b>\n"
+        "• Закрытый канал с торговыми сигналами\n"
+        "• Futures и Spot сделки\n"
+        "• Детальные точки входа/выхода\n"
+        "• Реальная статистика профита\n\n"
+        "🤖 <b>AI-клон Аналитик</b>\n"
+        "• Персональный помощник 24/7\n"
+        "• Анализ рынка в реальном времени\n"
+        "• Прогнозы и рекомендации\n"
+        "• Ответы на ваши вопросы\n\n"
+        "📈 <b>Мой Аккаунт</b>\n"
+        "• Детальная статистика\n"
+        "• История сделок и результатов\n"
+        "• Персональные настройки\n"
+        "• Доступ ко всем фичам\n\n"
+        "🆘 <b>Premium-поддержка</b>\n"
+        "• Приоритетные ответы от команды\n"
+        "• Среднее время ответа: меньше 30 мин\n"
+        "• Прямая связь с основателем\n\n"
+        "💎 <b>VIP-услуги:</b>\n"
+        "• 💰 Разбор кошелька (300$)\n"
+        "• 💎 VIP-консультация (350$)\n\n"
+        "💰 <b>Стоимость:</b> от 700$ / месяц\n"
+        "🎁 <b>Скидка 100$</b> при подписке на канал!\n\n"
+        "Трансформируйте свой трейдинг!",
         parse_mode="HTML"
     )
 
@@ -38,12 +52,16 @@ async def show_premium_features(message: Message):
 async def show_resources(message: Message):
     """Показать бесплатные ресурсы"""
     await message.answer(
-        "📚 <b>Бесплатные ресурсы:</b>\n\n"
-        "📰 Основной канал с новостями\n"
-        "🔗 https://t.me/blexler_invest\n\n"
-        "💬 Чат сообщества\n"
-        "🔗 https://t.me/+514GO2tFjAtkMWRi",
-        parse_mode="HTML"
+        "📚 <b>БЕСПЛАТНЫЕ РЕСУРСЫ</b>\n\n"
+        "📰 <b>Основной канал</b>\n"
+        "Мои мысли, аналитика и сигналы.\n"
+        "➡️ <a href=\"https://t.me/blexler_invest\">BLEXLER-канал</a>\n\n"
+        "💬 <b>Чат сообщества</b>\n"
+        "Общайтесь с единомышленниками!\n"
+        "➡️ <a href=\"https://t.me/+514GO2tFjAtkMWRi\">ОТКРЫТЫЙ ЧАТ BLEXLER</a>\n\n"
+        "Присоединяйтесь к нашему сообществу! 🚀",
+        parse_mode="HTML",
+        disable_web_page_preview=True
     )
 
 
@@ -62,16 +80,115 @@ async def show_author_info(message: Message):
 
 
 @router.message(F.text == "📞 Поддержка")
-async def show_support_info(message: Message):
-    """Контакты поддержки"""
+async def show_support(message: Message):
+    """Показать контакты поддержки"""
     await message.answer(
         "📞 <b>Поддержка</b>\n\n"
-        "По всем вопросам пишите:\n"
-        "👤 @admin_username\n\n"
-        "📧 Email: support@example.com\n\n"
-        "Обычно отвечаем в течение 24 часов",
+        "По всем вопросам обращайтесь:\n"
+        "👤 @blexler\n\n"
+        "Ответим в течение 24 часов! 😊",
         parse_mode="HTML"
     )
+
+
+# === ПОДМЕНЮ РОЗЫГРЫША ===
+
+@router.message(F.text == "🎁 Розыгрыш BLEXLER")
+async def show_giveaway_menu(message: Message):
+    """Показать подменю розыгрыша"""
+    user_id = message.from_user.id
+    
+    # Получаем данные пользователя
+    user = await db.get_user(user_id)
+    level = user.get('level', 1) if user else 1
+    xp = user.get('xp', 0) if user else 0
+    
+    await message.answer(
+        "🎁 <b>РОЗЫГРЫШ BLEXLER</b>\n\n"
+        "🏆 <b>ГЛАВНЫЙ ПРИЗ:</b>\n"
+        "Персональное обучение торговле от BLEXLER!\n\n"
+        "✨ <b>Что вы получите:</b>\n"
+        "• Индивидуальная программа обучения\n"
+        "• Личные сессии с экспертом\n"
+        "• Проверка и корректировка стратегии\n"
+        "• Психология успешного трейдера\n"
+        "• Доступ к приватным инсайтам\n"
+        "• Сопровождение на 3 месяца\n\n"
+        "💰 <b>Стоимость обучения: >1500$</b>\n"
+        "🎯 <b>Победитель:</b> Определяется по рейтингу XP\n\n"
+        f"📊 <b>Ваш прогресс:</b>\n"
+        f"• Уровень: {level}\n"
+        f"• XP: {xp}\n\n"
+        "⚡ <b>Зарабатывайте XP за активность:</b>\n"
+        "• Реферальная программа\n"
+        "• Проверка Instagram Stories\n"
+        "• Ежедневная активность\n\n"
+        "Чем больше XP - тем выше в рейтинге!\n\n"
+        "Нажмите \"❓ Как участвовать?\" для подробностей.",
+        reply_markup=get_giveaway_menu(),
+        parse_mode="HTML"
+    )
+
+
+@router.message(F.text == "❓ Как участвовать?")
+async def show_giveaway_rules(message: Message):
+    """Показать правила розыгрыша"""
+    user_id = message.from_user.id
+    
+    # Получаем данные пользователя
+    user = await db.get_user(user_id)
+    level = user.get('level', 1) if user else 1
+    xp = user.get('xp', 0) if user else 0
+    
+    await message.answer(
+        "❓ <b>КАК УЧАСТВОВАТЬ В РОЗЫГРЫШЕ?</b>\n\n"
+        "📋 <b>Шаг 1: Регистрация</b>\n"
+        "• Вы уже зарегистрированы! ✅\n"
+        f"• Ваш уровень: {level} (XP: {xp})\n\n"
+        "⚡ <b>Шаг 2: Зарабатывайте XP</b>\n\n"
+        "📎 <b>Реферальная программа:</b>\n"
+        "• Приглашайте друзей по своей ссылке\n"
+        "• +50 XP за каждого реферала\n"
+        "• Дополнительно +25 XP и +10 XP за рефералов 2-го и 3-го уровня\n\n"
+        "📸 <b>Instagram Stories:</b>\n"
+        "• Выложите Stories с упоминанием @blexler_invest\n"
+        "• Сделайте скриншот Stories\n"
+        "• Отправьте боту для проверки\n"
+        "• +100 XP за успешную проверку\n"
+        "• Лимит: 5 проверок в день\n\n"
+        "💎 <b>Premium подписка:</b>\n"
+        "• Активируйте Premium\n"
+        "• +100 XP сразу\n\n"
+        "🏆 <b>Шаг 3: Следите за Рейтингом</b>\n"
+        "• Проверяйте \"🏆 Топ Участников\"\n"
+        "• Занимайте топовые позиции\n"
+        "• Зарабатывайте достижения\n\n"
+        "🎁 <b>Шаг 4: Призы</b>\n"
+        "• Розыгрыш проводится <b>каждый месяц</b>\n"
+        "• Победители определяются по рейтингу XP\n"
+        "• Следите за объявлениями в канале!\n\n"
+        "💡 <b>Совет:</b> Комбинируйте все способы заработка XP для максимального результата!",
+        parse_mode="HTML"
+    )
+
+
+@router.message(F.text == "🔙 Главное Меню")
+async def back_to_main_menu(message: Message):
+    """Возврат в главное меню"""
+    user_id = message.from_user.id
+    
+    # Проверяем статус пользователя
+    user = await db.get_user(user_id)
+    is_premium = user.get('status') == 'premium' if user else False
+    
+    if is_premium:
+        menu = get_premium_menu(user_id)
+        text = "👑 <b>Premium Меню</b>"
+    else:
+        menu = get_free_menu(user_id)
+        text = "🏠 <b>Главное Меню</b>"
+    
+    await message.answer(text, reply_markup=menu, parse_mode="HTML")
 
 
 # === ОБРАБОТЧИКИ PREMIUM МЕНЮ ===

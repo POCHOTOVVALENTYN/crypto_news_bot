@@ -5,9 +5,17 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKe
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from config import ADMIN_ID, config
+from config import ADMIN_ID, config, ADMIN_IDS, is_admin
 from database import db
 from loader import bot
+from keyboards.admin_keyboards import (
+    get_admin_main_menu,
+    get_posting_menu,
+    get_testing_menu,
+    get_main_menu_keyboard,  # старое меню
+    get_cancel_keyboard
+)
+from keyboards.reply import get_free_menu, get_premium_menu
 
 logger = logging.getLogger(__name__)
 
@@ -16,57 +24,232 @@ router = Router()
 # === СОСТОЯНИЯ ===
 class AdminStates(StatesGroup):
     main_menu = State()
+    posting_mode = State()
+    free_user_mode = State()
+    premium_user_mode = State()
+    testing_mode = State()
     waiting_for_post_content = State()
-    waiting_for_post_photo = State()  # Если с фото
+    waiting_for_post_photo = State()
     editing_footer = State()
 
-# === КЛАВИАТУРЫ ===
-def get_main_menu_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📝 Создать публикацию"), KeyboardButton(text="📅 Дайджесты")],
-            [KeyboardButton(text="⚙️ Настройки футера"), KeyboardButton(text="📊 Статистика")]
-        ],
-        resize_keyboard=True
-    )
 
-def get_cancel_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🏠 Главная"), KeyboardButton(text="🔙 Назад")]
-        ],
-        resize_keyboard=True
-    )
+# === ФИЛЬТРЫ ДЛЯ АДМИНОВ ===
+def admin_filter(user_id: int) -> bool:
+    """Проверка прав админа"""
+    return is_admin(user_id)
 
-def get_publication_type_keyboard():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📸 С фото", callback_data="pub_type_photo"),
-             InlineKeyboardButton(text="📝 Без фото", callback_data="pub_type_text")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")]
-        ]
-    )
 
-# === ОБРАБОТЧИКИ ===
+# === ОБРАБОТЧИКИ ГЛАВНОГО МЕНЮ ===
 
-@router.message(Command("start"), F.from_user.id == int(ADMIN_ID))
-@router.message(Command("menu"), F.from_user.id == int(ADMIN_ID))
-async def cmd_admin_menu(message: Message, state: FSMContext):
-    """Главное меню админа"""
+@router.message(Command("start"), F.func(lambda m: admin_filter(m.from_user.id)))
+@router.message(Command("menu"), F.func(lambda m: admin_filter(m.from_user.id)))
+@router.message(Command("admin"), F.func(lambda m: admin_filter(m.from_user.id)))
+async def cmd_admin_main_menu(message: Message, state: FSMContext):
+    """Главное админ меню"""
     await state.clear()
+    await state.set_state(AdminStates.main_menu)
+    
+    admin_name = "Валентин" if message.from_user.id == 830196453 else "BLEXLER"
+    
     await message.answer(
-        "👋 Привет, Админ! Что будем делать?",
-        reply_markup=get_main_menu_keyboard()
+        f"👋 Привет, {admin_name}!\n\n"
+        "🎛 <b>Админ Панель</b>\n"
+        "Выберите режим работы:",
+        reply_markup=get_admin_main_menu(),
+        parse_mode="HTML"
     )
 
-@router.message(F.text == "🏠 Главная", F.from_user.id == int(ADMIN_ID))
-async def nav_main_menu(message: Message, state: FSMContext):
-    await cmd_admin_menu(message, state)
 
-@router.message(F.text == "🔙 Назад", F.from_user.id == int(ADMIN_ID))
+@router.message(F.text == "🏠 Главное Меню", F.func(lambda m: admin_filter(m.from_user.id)))
+@router.message(F.text == "🔙 Главное Меню", F.func(lambda m: admin_filter(m.from_user.id)))
+async def nav_main_menu(message: Message, state: FSMContext):
+    """Возврат в главное меню"""
+    await cmd_admin_main_menu(message, state)
+
+
+# === РЕЖИМ ПОСТИНГА ===
+
+@router.message(F.text == "📰 Режим Постинга", F.func(lambda m: admin_filter(m.from_user.id)))
+async def enter_posting_mode(message: Message, state: FSMContext):
+    """Переход в режим постинга"""
+    await state.set_state(AdminStates.posting_mode)
+    await message.answer(
+        "📰 <b>Режим Постинга</b>\n\n"
+        "Управление публикациями и дайджестами:",
+        reply_markup=get_posting_menu(),
+        parse_mode="HTML"
+    )
+
+
+# === РЕЖИМ FREE USER ===
+
+@router.message(F.text == "👤 Режим Free User", F.func(lambda m: admin_filter(m.from_user.id)))
+async def enter_free_user_mode(message: Message, state: FSMContext):
+    """Эмуляция Free пользователя"""
+    await state.set_state(AdminStates.free_user_mode)
+    await message.answer(
+        "🔧 <b>Режим тестирования: Free User</b>\n\n"
+        "Вы видите меню обычного пользователя.\n"
+        "Все функции работают в тестовом режиме.",
+        reply_markup=get_free_menu(message.from_user.id),  # Передаём user_id
+        parse_mode="HTML"
+    )
+
+
+# === РЕЖИМ PREMIUM USER ===
+
+@router.message(F.text == "👑 Режим Premium User", F.func(lambda m: admin_filter(m.from_user.id)))
+async def enter_premium_user_mode(message: Message, state: FSMContext):
+    """Эмуляция Premium пользователя"""
+    await state.set_state(AdminStates.premium_user_mode)
+    await message.answer(
+        "🔧 <b>Режим тестирования: Premium User</b>\n\n"
+        "Вы видите меню Premium подписчика.\n"
+        "Все функции работают в тестовом режиме.",
+        reply_markup=get_premium_menu(message.from_user.id),  # Передаём user_id
+        parse_mode="HTML"
+    )
+
+
+# === РЕЖИМ ТЕСТИРОВАНИЯ ===
+
+@router.message(F.text == "🧪 Тестирование Фич", F.func(lambda m: admin_filter(m.from_user.id)))
+async def enter_testing_mode(message: Message, state: FSMContext):
+    """Режим тестирования фич"""
+    await state.set_state(AdminStates.testing_mode)
+    await message.answer(
+        "🧪 <b>Тестирование Фич</b>\n\n"
+        "Быстрый доступ ко всем реализованным фичам:",
+        reply_markup=get_testing_menu(),
+        parse_mode="HTML"
+    )
+
+
+# === СТАРЫЕ ОБРАБОТЧИКИ (обратная совместимость) ===
+
+@router.message(F.text == "🔙 Назад", F.func(lambda m: admin_filter(m.from_user.id)))
 async def nav_back(message: Message, state: FSMContext):
-    # Логика "Назад" зависит от контекста, но пока просто в главное меню
-    await cmd_admin_menu(message, state)
+    """Назад в главное меню"""
+    await cmd_admin_main_menu(message, state)
+
+
+@router.message(F.text == "🔙 Админ Меню", F.func(lambda m: admin_filter(m.from_user.id)))
+async def return_to_admin_menu(message: Message, state: FSMContext):
+    """Возврат в админ-меню из режима Free/Premium User"""
+    await cmd_admin_main_menu(message, state)
+
+
+# === DASHBOARD ===
+
+@router.message(F.text == "📊 Dashboard", F.func(lambda m: admin_filter(m.from_user.id)))
+async def show_dashboard_menu(message: Message):
+    """Показать dashboard"""
+    # Импортируем из admin_dashboard
+    from handlers.admin_dashboard import show_dashboard
+    await show_dashboard(message)
+
+
+# === НАСТРОЙКИ БОТА ===
+
+@router.message(F.text == "⚙️ Настройки Бота", F.func(lambda m: admin_filter(m.from_user.id)))
+async def show_bot_settings(message: Message):
+    """Настройки бота"""
+    await message.answer(
+        "⚙️ <b>Настройки Бота</b>\n\n"
+        "<b>Текущие настройки:</b>\n"
+        "• RSS парсинг: ✅ Каждые 10 мин\n"
+        "• Публикации: ✅ Каждые 1 мин\n"
+        "• Health Monitor: ✅ Каждые 10 мин\n"
+        "• Авто-дожим: ✅ Каждый час\n"
+        "• Планировщик: ✅ 8:00 ежедневно\n\n"
+        "<b>Администраторы (3):</b>\n"
+        "• Валентин (830196453)\n"
+        "• BLEXLER (304050247)\n"
+        "• Админ #3 (1363924657)\n\n"
+        "Для изменения настроек обратитесь к разработчику.",
+        parse_mode="HTML"
+    )
+
+
+# === ОБРАБОТЧИКИ ТЕСТИРОВАНИЯ ===
+
+@router.message(F.text == "🎮 Геймификация", F.func(lambda m: admin_filter(m.from_user.id)))
+async def test_gamification(message: Message):
+    """Тест геймификации"""
+    await message.answer(
+        "🎮 <b>Тест Геймификации</b>\n\n"
+        "Используйте кнопки Free/Premium меню для тестирования:\n"
+        "• 🏆 Лидерборд\n"
+        "• 🏅 Мои Бейджи\n"
+        "• 📜 История Stories\n\n"
+        "Вернитесь в режим Free/Premium User для тестирования.",
+        parse_mode="HTML"
+    )
+
+
+@router.message(F.text == "🌳 MLM Тест", F.func(lambda m: admin_filter(m.from_user.id)))
+async def test_mlm(message: Message):
+    """Тест MLM"""
+    await message.answer(
+        "🌳 <b>Тест MLM Реферралов</b>\n\n"
+        "Доступные действия:\n"
+        "• 🌳 Мои Рефералы - просмотр дерева\n"
+        "• 📎 Пригласить друга - генерация ссылки\n\n"
+        "Вернитесь в режим Free/Premium User для тестирования.",
+        parse_mode="HTML"
+    )
+
+
+@router.message(F.text == "📸 Stories Тест", F.func(lambda m: admin_filter(m.from_user.id)))
+async def test_stories(message: Message):
+    """Тест Stories"""
+    await message.answer(
+        "📸 <b>Stories Vision Тест</b>\n\n"
+        "Используйте кнопки:\n"
+        "• 📸 Проверить Stories - загрузить скриншот\n"
+        "• 📜 История Stories - просмотр истории\n\n"
+        "Rate limit: 5 проверок/день\n"
+        "Вернитесь в режим Free/Premium User для тестирования.",
+        parse_mode="HTML"
+    )
+
+
+@router.message(F.text == "💳 Платежи Тест", F.func(lambda m: admin_filter(m.from_user.id)))
+async def test_payments(message: Message):
+    """Тест платежей"""
+    await message.answer(
+        "💳 <b>Тест Платёжной Системы</b>\n\n"
+        "⚠️ <b>ВНИМАНИЕ:</b> Тест платежей использует реальные Stars!\n\n"
+        "Доступно:\n"
+        "• 🌟 Получить Premium (500⭐)\n"
+        "• 💼 Консультация (27,000⭐)\n\n"
+        "Вернитесь в режим Free/Premium User для тестирования.",
+        parse_mode="HTML"
+    )
+
+
+@router.message(F.text == "🏅 Бейджи", F.func(lambda m: admin_filter(m.from_user.id)))
+async def test_badges(message: Message):
+    """Тест бейджей"""
+    await message.answer(
+        "🏅 <b>Тест Системы Бейджей</b>\n\n"
+        "Используйте кнопку:\n"
+        "• 🏅 Мои Бейджи - просмотр достижений\n\n"
+        "Вернитесь в режим Free/Premium User для тестирования.",
+        parse_mode="HTML"
+    )
+
+
+@router.message(F.text == "📜 История", F.func(lambda m: admin_filter(m.from_user.id)))
+async def test_history(message: Message):
+    """Тест истории"""
+    await message.answer(
+        "📜 <b>Тест Истории Stories</b>\n\n"
+        "Используйте кнопку:\n"
+        "• 📜 История Stories - просмотр истории проверок\n\n"
+        "Вернитесь в режим Free/Premium User для тестирования.",
+        parse_mode="HTML"
+    )
 
 
 # --- СТАТИСТИКА ---

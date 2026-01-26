@@ -11,9 +11,13 @@ logger = logging.getLogger(__name__)
 class NewsDatabase:
     def __init__(self):
         self.db_path = DB_PATH
+        self.conn = None  # Постоянное соединение для relay_manager
 
 
     async def init(self):
+        # Создаём постоянное соединение
+        self.conn = await aiosqlite.connect(self.db_path)
+        
         async with aiosqlite.connect(self.db_path) as db:
             # Добавили колонку priority (0-10 - расширенная система приоритетов)
             await db.execute("""
@@ -161,18 +165,88 @@ class NewsDatabase:
                              )
                              """)
             
-            # Таблица активностей пользователей (для геймификации)
+            # Таблица активности пользователей (для бейджей и геймификации)
             await db.execute("""
                              CREATE TABLE IF NOT EXISTS user_activities
                              (
+                                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                                 user_id       INTEGER NOT NULL,
+                                 activity_type TEXT    NOT NULL,
+                                 xp_earned     INTEGER DEFAULT 0,
+                                 created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                 metadata      TEXT,
+                                 FOREIGN KEY (user_id) REFERENCES users (user_id)
+                             )
+                             """)
+            
+            # === ТАБЛИЦЫ ДЛЯ RELAY MODE (ПОДДЕРЖКА И КОНСУЛЬТАЦИИ) ===
+            
+            # Таблица сессий поддержки
+            await db.execute("""
+                             CREATE TABLE IF NOT EXISTS support_sessions
+                             (
                                  id INTEGER PRIMARY KEY AUTOINCREMENT,
                                  user_id INTEGER NOT NULL,
-                                 activity_type TEXT NOT NULL,  -- 'read_post', 'share', 'referral', 'story_check', 'purchase'
-                                 xp_earned INTEGER DEFAULT 0,
-                                 metadata TEXT,  -- JSON для дополнительных данных
+                                 type TEXT NOT NULL,
+                                 current_admin_id INTEGER,
+                                 admin_cascade_level INTEGER DEFAULT 1,
+                                 status TEXT DEFAULT 'active',
                                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                                 
+                                 last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                 resolved_at DATETIME,
+                                 escalation_attempts INTEGER DEFAULT 0,
+                                 related_consultation_id INTEGER,
                                  FOREIGN KEY (user_id) REFERENCES users(user_id)
+                             )
+                             """)
+            
+            # Таблица сообщений поддержки
+            await db.execute("""
+                             CREATE TABLE IF NOT EXISTS support_messages
+                             (
+                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                 session_id INTEGER NOT NULL,
+                                 from_user_id INTEGER NOT NULL,
+                                 to_user_id INTEGER NOT NULL,
+                                 message_text TEXT,
+                                 message_type TEXT DEFAULT 'text',
+                                 telegram_message_id INTEGER,
+                                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                 FOREIGN KEY (session_id) REFERENCES support_sessions(id)
+                             )
+                             """)
+            
+            # Таблица консультаций
+            await db.execute("""
+                             CREATE TABLE IF NOT EXISTS consultations
+                             (
+                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                 user_id INTEGER NOT NULL,
+                                 type TEXT NOT NULL,
+                                 amount_paid INTEGER NOT NULL,
+                                 amount_usd INTEGER NOT NULL,
+                                 status TEXT DEFAULT 'paid',
+                                 scheduled_datetime DATETIME,
+                                 payment_id INTEGER,
+                                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                 completed_at DATETIME,
+                                 notes TEXT,
+                                 FOREIGN KEY (user_id) REFERENCES users(user_id),
+                                 FOREIGN KEY (payment_id) REFERENCES payments(id)
+                             )
+                             """)
+            
+            # Таблица напоминаний о консультациях
+            await db.execute("""
+                             CREATE TABLE IF NOT EXISTS consultation_reminders
+                             (
+                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                 consultation_id INTEGER NOT NULL,
+                                 reminder_type TEXT NOT NULL,
+                                 sent BOOLEAN DEFAULT 0,
+                                 scheduled_time DATETIME NOT NULL,
+                                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                 FOREIGN KEY (consultation_id) REFERENCES consultations(id)
                              )
                              """)
             
@@ -1174,6 +1248,88 @@ class NewsDatabase:
         
         return {'level_up': False}
 
+    async def save_payment(self, user_id: int, amount_stars: int, amount_usd: int,
+                          payment_type: str, telegram_payment_id: str, status: str = 'completed'):
+        """Сохранить платёж в БД"""
+        async with self.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO payments 
+                (user_id, amount, amount_usd, payment_type, telegram_payment_id, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, amount_stars, amount_usd, payment_type, telegram_payment_id, status, 
+                 datetime.now().isoformat())
+            )
+            payment_id = cursor.lastrowid
+            await conn.commit()
+            return payment_id
+    
+    async def create_consultation(self, user_id: int, consultation_type: str,
+                                  amount_paid: int, amount_usd: int, payment_id: int = None):
+        """Создать консультацию после оплаты"""
+        async with self.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO consultations
+                (user_id, type, amount_paid, amount_usd, payment_id, status, created_at)
+                VALUES (?, ?, ?, ?, ?, 'paid', ?)
+                """,
+                (user_id, consultation_type, amount_paid, amount_usd, payment_id,
+                 datetime.now().isoformat())
+            )
+            consultation_id = cursor.lastrowid
+            await conn.commit()
+            return consultation_id
+    
+    async def update_consultation_datetime(self, consultation_id: int, scheduled_datetime: str):
+        """Обновить дату/время консультации"""
+        async with self.get_connection() as conn:
+            await conn.execute(
+                """
+                UPDATE consultations
+                SET scheduled_datetime = ?, status = 'scheduled'
+                WHERE id = ?
+                """,
+                (scheduled_datetime, consultation_id)
+            )
+            await conn.commit()
+    
+    async def get_consultation(self, consultation_id: int):
+        """Получить консультацию по ID"""
+        async with self.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM consultations WHERE id = ?",
+                (consultation_id,)
+            )
+            row = await cursor.fetchone()
+            if row:
+                columns = [desc[0] for desc in cursor.description]
+                return dict(zip(columns, row))
+        return None
+    
+    async def create_reminder(self, consultation_id: int, reminder_type: str, scheduled_time: str):
+        """Создать напоминание о консультации"""
+        async with self.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO consultation_reminders
+                (consultation_id, reminder_type, scheduled_time, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (consultation_id, reminder_type, scheduled_time, datetime.now().isoformat())
+            )
+            await conn.commit()
+            return cursor.lastrowid
+    
+    async def mark_reminder_sent(self, reminder_id: int):
+        """Отметить напоминание как отправленное"""
+        async with self.get_connection() as conn:
+            await conn.execute(
+                "UPDATE consultation_reminders SET sent = 1 WHERE id = ?",
+                (reminder_id,)
+            )
+            await conn.commit()
 
-
+# Экспортируем экземпляр
 db = NewsDatabase()
