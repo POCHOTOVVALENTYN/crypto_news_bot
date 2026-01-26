@@ -3,10 +3,18 @@ import asyncio
 from typing import Optional, Dict, List
 
 from config import (
+    GROQ_API_KEY, GROQ_MODEL,
+    TOGETHER_API_KEY, TOGETHER_MODEL,
+    CF_ACCOUNT_ID, CF_API_TOKEN, CF_MODEL,
+    COHERE_API_KEY, COHERE_MODEL,
     GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL,
     HUGGINGFACE_API_KEY, OLLAMA_BASE_URL, OLLAMA_MODEL
 )
 from services.ai.base_provider import AIProvider
+from services.ai.providers.groq import GroqProvider
+from services.ai.providers.together import TogetherProvider
+from services.ai.providers.cloudflare import CloudflareProvider
+from services.ai.providers.cohere import CohereProvider
 from services.ai.providers.gemini import GeminiProvider
 from services.ai.providers.openai import OpenAIProvider
 from services.ai.providers.deepseek import DeepSeekProvider
@@ -24,7 +32,23 @@ class AIProviderManager:
         self._init_providers()
         
     def _init_providers(self):
-        # 1. Gemini (Primary)
+        # 1. Groq (Primary - fastest & 750k free tokens/day)
+        if GROQ_API_KEY:
+            self.providers.append(GroqProvider(GROQ_API_KEY, GROQ_MODEL))
+        
+        # 2. Together AI (Secondary - $25 free)
+        if TOGETHER_API_KEY:
+            self.providers.append(TogetherProvider(TOGETHER_API_KEY, TOGETHER_MODEL))
+            
+        # 3. Cohere (1000 calls/month)
+        if COHERE_API_KEY:
+            self.providers.append(CohereProvider(COHERE_API_KEY, COHERE_MODEL))
+            
+        # 4. Cloudflare Workers AI (Free forever)
+        if CF_ACCOUNT_ID and CF_API_TOKEN:
+            self.providers.append(CloudflareProvider(CF_ACCOUNT_ID, CF_API_TOKEN, CF_MODEL))
+        
+        # 2. Gemini (Secondary)
         if GEMINI_API_KEY:
             self.providers.append(GeminiProvider(GEMINI_API_KEY))
             

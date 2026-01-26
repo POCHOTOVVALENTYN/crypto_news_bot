@@ -133,15 +133,15 @@ class TelegramListener:
                 # ✅ ИСПРАВЛЕНО: Добавлен таймаут для AI анализа (30 секунд)
                 try:
                     processed = await asyncio.wait_for(
-                        self.ai.process_incoming_news(raw_text),
+                        self.ai.analyze_text(raw_text, context="telegram_news"),
                         timeout=30.0
                     )
                 except asyncio.TimeoutError:
                     logger.warning(f"⏱️ AI анализ Userbot новости превысил таймаут (30 секунд), пропускаем")
                     return
 
-                if processed:
-                    title = processed['ru_title']
+                if processed and processed.get('importance', 0) >= 5:
+                    title = processed.get('summary', raw_text[:200])
                     if await db.is_duplicate_by_content(title, threshold=85):
                         logger.info(f"♻️ Дубликат пропущен: {title}")
                         return
@@ -150,7 +150,7 @@ class TelegramListener:
                     await db.add_news(
                         url=msg_unique_id,
                         title=title,
-                        summary=processed['ru_summary'],
+                        summary=processed.get('summary', raw_text[:500]),
                         source=f"⚡ Insider ({source_title})",
                         published_at="Just now",
                         image_url=None,

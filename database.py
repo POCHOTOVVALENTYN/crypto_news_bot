@@ -712,9 +712,9 @@ class NewsDatabase:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
                 async with db.execute(
-                    """SELECT user_id, last_step, happened_at
+                    """SELECT user_id, step as last_step, happened_at
                        FROM funnel_stats
-                       WHERE last_step IN ('offer_shown', 'price_objection')
+                       WHERE step IN ('offer_shown', 'price_objection')
                        AND happened_at < ?
                        ORDER BY happened_at ASC LIMIT 50""",
                     (cutoff_time,)

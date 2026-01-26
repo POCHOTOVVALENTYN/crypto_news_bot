@@ -74,6 +74,21 @@ class Settings(BaseSettings):
     admin_id: Optional[int] = Field(None, description="Admin user ID for alerts")
 
     # === AI PROVIDERS (Хотя бы один обязателен) ===
+    # Groq - новый провайдер с щедрым free tier (750k токенов/день)
+    groq_api_key: Optional[str] = Field(None, description="Groq API key")
+    groq_model: str = Field("llama-3.1-70b-versatile", description="Groq Model Name")
+    # Together AI ($25 free credits)
+    together_api_key: Optional[str] = Field(None, description="Together AI API key")
+    together_model: str = Field("meta-llama/Llama-3-70b-chat-hf", description="Together AI Model")
+    
+    # Cloudflare Workers AI (Free forever)
+    cf_account_id: Optional[str] = Field(None, description="Cloudflare Account ID")
+    cf_api_token: Optional[str] = Field(None, description="Cloudflare API Token")
+    cf_model: str = Field("@cf/meta/llama-3-8b-instruct", description="Cloudflare Model")
+    # Cohere (1000 calls/month free)
+    cohere_api_key: Optional[str] = Field(None, description="Cohere API Key")
+    cohere_model: str = Field("command-r-plus", description="Cohere Model")
+    
     openai_api_key: Optional[str] = Field(None, description="OpenAI API key")
     gemini_api_key: Optional[str] = Field(None, description="Google Gemini API key")
     mistral_api_key: Optional[str] = Field(None, description="Mistral AI API key")
@@ -213,6 +228,15 @@ TELEGRAM_CHANNEL_ID = config.telegram_channel_id
 ADMIN_ID = config.admin_id
 OPENAI_API_KEY = config.openai_api_key
 GEMINI_API_KEY = config.gemini_api_key
+GROQ_API_KEY = config.groq_api_key
+TOGETHER_API_KEY = config.together_api_key
+TOGETHER_MODEL = config.together_model
+CF_ACCOUNT_ID = config.cf_account_id
+CF_API_TOKEN = config.cf_api_token
+COHERE_API_KEY = config.cohere_api_key
+COHERE_MODEL = config.cohere_model
+CF_MODEL = config.cf_model
+GROQ_MODEL = config.groq_model
 MISTRAL_API_KEY = config.mistral_api_key
 DEEPSEEK_API_KEY = config.deepseek_api_key
 DEEPSEEK_BASE_URL = config.deepseek_base_url

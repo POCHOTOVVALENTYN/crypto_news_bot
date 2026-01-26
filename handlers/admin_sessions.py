@@ -22,17 +22,16 @@ def admin_filter(user_id: int) -> bool:
 
 # === ПРОСМОТР СЕССИЙ ПОДДЕРЖКИ ===
 
-@router.message(F.text == "📊 Сессии Поддержки")
-async def show_support_sessions(message: Message):
-    """Показать активные сессии поддержки"""
+@router.message(F.text == "📊 Активные Сессии")
+async def show_active_sessions(message: Message):
+    """Админ: показать активные сессии поддержки"""
     user_id = message.from_user.id
     
     if not admin_filter(user_id):
         return
     
     # Получить активные сессии
-    async with db.get_connection() as conn:
-        cursor = await conn.execute("""
+    cursor = await db.conn.execute("""
             SELECT s.id, s.user_id, s.type, s.current_admin_id, s.admin_cascade_level,
                    s.created_at, s.last_activity, u.full_name, u.username
             FROM support_sessions s
@@ -40,7 +39,7 @@ async def show_support_sessions(message: Message):
             WHERE s.status = 'active'
             ORDER BY s.created_at DESC
         """)
-        sessions = await cursor.fetchall()
+    sessions = await cursor.fetchall()
     
     if not sessions:
         await message.answer("✅ Нет активных сессий поддержки")
@@ -87,17 +86,16 @@ async def refresh_sessions(callback: CallbackQuery):
         await callback.answer("Доступ запрещён", show_alert=True)
         return
     
-    # Получить активные сессии (копия кода выше)
-    async with db.get_connection() as conn:
-        cursor = await conn.execute("""
-            SELECT s.id, s.user_id, s.type, s.current_admin_id, s.admin_cascade_level,
-                   s.created_at, s.last_activity, u.full_name, u.username
-            FROM support_sessions s
-            LEFT JOIN users u ON s.user_id = u.user_id
-            WHERE s.status = 'active'
-            ORDER BY s.created_at DESC
-        """)
-        sessions = await cursor.fetchall()
+    # Получить активные сессии
+    cursor = await db.conn.execute("""
+        SELECT s.id, s.user_id, s.type, s.current_admin_id, s.admin_cascade_level,
+               s.created_at, s.last_activity, u.full_name, u.username
+        FROM support_sessions s
+        LEFT JOIN users u ON s.user_id = u.user_id
+        WHERE s.status = 'active'
+        ORDER BY s.created_at DESC
+    """)
+    sessions = await cursor.fetchall()
     
     if not sessions:
         await callback.message.edit_text("✅ Нет активных сессий поддержки")
@@ -146,8 +144,8 @@ async def show_consultations(message: Message):
     if not admin_filter(user_id):
         return
     
-    async with db.get_connection() as conn:
-        cursor = await conn.execute("""
+    # Получить консультации
+    cursor = await db.conn.execute("""
             SELECT c.id, c.user_id, c.type, c.amount_usd, c.scheduled_datetime,
                    c.status, u.full_name, u.username
             FROM consultations c
@@ -155,7 +153,7 @@ async def show_consultations(message: Message):
             WHERE c.status IN ('paid', 'scheduled')
             ORDER BY c.scheduled_datetime ASC
         """)
-        consultations = await cursor.fetchall()
+    consultations = await cursor.fetchall()
     
     if not consultations:
         await message.answer("✅ Нет запланированных консультаций")
