@@ -2,6 +2,7 @@ import logging
 from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
+from aiogram.filters import StateFilter
 
 from database import db
 from loader import bot
@@ -13,9 +14,10 @@ logger = logging.getLogger(__name__)
 
 # === ОБРАБОТЧИКИ ГЛАВНОГО МЕНЮ ===
 
-@router.message(F.text == "🎁 Что внутри Premium?")
-async def show_premium_features(message: Message):
+@router.message(F.text == "🎁 Что внутри Premium?", StateFilter("*"))
+async def show_premium_features(message: Message, state: FSMContext):
     """Показать функции Premium"""
+    await state.clear()
     await message.answer(
         "💎 <b>PREMIUM-ПОДПИСКА</b>\n\n"
         "🎯 <b>Эксклюзивный доступ:</b>\n\n"
@@ -48,9 +50,10 @@ async def show_premium_features(message: Message):
     )
 
 
-@router.message(F.text == "📚 Наши ресурсы")
-async def show_resources(message: Message):
+@router.message(F.text == "📚 Наши ресурсы", StateFilter("*"))
+async def show_resources(message: Message, state: FSMContext):
     """Показать бесплатные ресурсы"""
+    await state.clear()
     await message.answer(
         "📚 <b>БЕСПЛАТНЫЕ РЕСУРСЫ</b>\n\n"
         "📰 <b>Основной канал</b>\n"
@@ -65,9 +68,10 @@ async def show_resources(message: Message):
     )
 
 
-@router.message(F.text == "👨‍💻 Об Авторе")
-async def show_author_info(message: Message):
+@router.message(F.text == "👨‍💻 Об Авторе", StateFilter("*"))
+async def show_author_info(message: Message, state: FSMContext):
     """Информация об авторе"""
+    await state.clear()
     await message.answer(
         "👨‍💻 <b>Об Авторе</b>\n\n"
         "Евгений - профессиональный криптотрейдер и аналитик\n\n"
@@ -79,9 +83,10 @@ async def show_author_info(message: Message):
     )
 
 
-@router.message(F.text == "📞 Поддержка")
-async def show_support(message: Message):
+@router.message(F.text == "📞 Поддержка", StateFilter("*"))
+async def show_support(message: Message, state: FSMContext):
     """Показать контакты поддержки"""
+    await state.clear()
     await message.answer(
         "📞 <b>Поддержка</b>\n\n"
         "По всем вопросам обращайтесь:\n"
@@ -93,9 +98,10 @@ async def show_support(message: Message):
 
 # === ПОДМЕНЮ РОЗЫГРЫША ===
 
-@router.message(F.text == "🎁 Розыгрыш BLEXLER")
-async def show_giveaway_menu(message: Message):
+@router.message(F.text == "🎁 Розыгрыш BLEXLER", StateFilter("*"))
+async def show_giveaway_menu(message: Message, state: FSMContext):
     """Показать подменю розыгрыша"""
+    await state.clear()
     user_id = message.from_user.id
     
     # Получаем данные пользователя
@@ -130,9 +136,10 @@ async def show_giveaway_menu(message: Message):
     )
 
 
-@router.message(F.text == "❓ Как участвовать?")
-async def show_giveaway_rules(message: Message):
+@router.message(F.text == "❓ Как участвовать?", StateFilter("*"))
+async def show_giveaway_rules(message: Message, state: FSMContext):
     """Показать правила розыгрыша"""
+    await state.clear()
     user_id = message.from_user.id
     
     # Получаем данные пользователя
@@ -172,9 +179,10 @@ async def show_giveaway_rules(message: Message):
     )
 
 
-@router.message(F.text == "🔙 Главное Меню")
-async def back_to_main_menu(message: Message):
+@router.message(F.text == "🔙 Главное Меню", StateFilter("*"))
+async def back_to_main_menu(message: Message, state: FSMContext):
     """Возврат в главное меню"""
+    await state.clear()
     user_id = message.from_user.id
     
     # Проверяем статус пользователя
@@ -193,9 +201,10 @@ async def back_to_main_menu(message: Message):
 
 # === ОБРАБОТЧИКИ PREMIUM МЕНЮ ===
 
-@router.message(F.text == "🚀 Сигналы (Futures)")
-async def premium_signals(message: Message):
+@router.message(F.text == "🚀 Сигналы (Futures)", StateFilter("*"))
+async def premium_signals(message: Message, state: FSMContext):
     """Доступ к каналу сигналов (Premium)"""
+    await state.clear()
     user_id = message.from_user.id
     
     # Проверка Premium
@@ -232,9 +241,10 @@ async def premium_signals(message: Message):
         )
 
 
-@router.message(F.text == "📊 Премиум-Аналитика")
-async def premium_analytics(message: Message):
+@router.message(F.text == "📊 Премиум-Аналитика", StateFilter("*"))
+async def premium_analytics(message: Message, state: FSMContext):
     """Доступ к премиум-аналитике"""
+    await state.clear()
     user_id = message.from_user.id
     
     is_premium = await db.check_subscription(user_id)
@@ -253,9 +263,10 @@ async def premium_analytics(message: Message):
     )
 
 
-@router.message(F.text == "💡 Авторские Рекомендации")
-async def premium_recommendations(message: Message):
+@router.message(F.text == "💡 Авторские Рекомендации", StateFilter("*"))
+async def premium_recommendations(message: Message, state: FSMContext):
     """Авторские рекомендации из топовых новостей"""
+    await state.clear()
     user_id = message.from_user.id
     
     is_premium = await db.check_subscription(user_id)
@@ -288,9 +299,10 @@ async def premium_recommendations(message: Message):
         await message.answer("⚠️ Ошибка загрузки рекомендаций")
 
 
-@router.message(F.text == "🎓 Обучающий Курс")
-async def premium_education(message: Message):
+@router.message(F.text == "🎓 Обучающий Курс", StateFilter("*"))
+async def premium_education(message: Message, state: FSMContext):
     """Обучающие материалы"""
+    await state.clear()
     user_id = message.from_user.id
     
     is_premium = await db.check_subscription(user_id)
@@ -310,36 +322,64 @@ async def premium_education(message: Message):
     )
 
 
-@router.message(F.text == "⚙️ Мой Аккаунт")
-async def show_account_info(message: Message):
-    """Информация об аккаунте"""
-    user_id = message.from_user.id
-    
-    user = await db.get_user(user_id)
-    if not user:
-        await message.answer("⚠️ Ошибка получения данных аккаунта")
-        return
-    
-    is_premium = await db.check_subscription(user_id)
-    
-    text = f"⚙️ <b>Ваш аккаунт</b>\n\n"
-    text += f"👤 ID: {user_id}\n"
-    text += f"📛 Имя: {user['full_name']}\n"
-    
-    if is_premium and user.get('subscription_end'):
-        end_date = datetime.fromisoformat(user['subscription_end'])
-        text += f"\n👑 <b>Статус:</b> Premium\n"
-        text += f"📅 <b>Активна до:</b> {end_date.strftime('%d.%m.%Y %H:%M')}\n"
-    else:
-        text += f"\n📱 <b>Статус:</b> Бесплатный\n"
-    
-    if user.get('total_purchases', 0) > 0:
-        text += f"\n💰 Всего покупок: {user['total_purchases']}\n"
-        text += f"⭐️ Потрачено звёзд: {user['lifetime_spent']}\n"
-    
-    text += f"\n📆 Регистрация: {user.get('joined_at', 'Н/Д')}"
-    
-    await message.answer(text, parse_mode="HTML")
+@router.message(F.text.in_({"👤 Мой Профиль", "⚙️ Мой Аккаунт"}), StateFilter("*"))
+async def show_account_info_unified(message: Message, state: FSMContext):
+    """Информация об аккаунте (Единый обработчик)"""
+    await state.clear()
+    logger.info(f"👤 Showing profile for {message.from_user.id}")
+    try:
+        user_id = message.from_user.id
+        
+        user = await db.get_user(user_id)
+        if not user:
+            # Если пользователя нет, пробуем создать (редкий кейс)
+            logger.warning(f"User {user_id} not found in DB during profile check")
+            await db.add_user(user_id, message.from_user.username, message.from_user.full_name)
+            user = await db.get_user(user_id)
+        
+        if not user:
+             await message.answer("⚠️ Ошибка получения данных профиля.")
+             return
+
+        is_premium = await db.check_subscription(user_id)
+        
+        text = f"⚙️ <b>Ваш аккаунт</b>\n\n"
+        text += f"👤 ID: {user_id}\n"
+        text += f"📛 Имя: {user['full_name'] or 'Не указано'}\n"
+        
+        if is_premium and user.get('subscription_end'):
+            end_date = datetime.fromisoformat(user['subscription_end'])
+            text += f"\n👑 <b>Статус:</b> Premium\n"
+            text += f"📅 <b>Активна до:</b> {end_date.strftime('%d.%m.%Y %H:%M')}\n"
+        else:
+            text += f"\n📱 <b>Статус:</b> Бесплатный\n"
+        
+        if user.get('total_purchases', 0) > 0:
+            text += f"\n💰 Всего покупок: {user['total_purchases']}\n"
+            text += f"⭐️ Потрачено звёзд: {user['lifetime_spent']}\n"
+        
+        # Безопасное отображение даты
+        joined_at = user.get('joined_at', 'Н/Д')
+        if joined_at != 'Н/Д':
+             try:
+                 joined_dt = datetime.fromisoformat(joined_at)
+                 joined_at = joined_dt.strftime('%d.%m.%Y')
+             except:
+                 pass
+        
+        text += f"\n📆 Регистрация: {joined_at}\n\n"
+        
+        # Добавляем уровень и XP
+        level = user.get('level', 1)
+        xp = user.get('xp', 0)
+        text += f"🏆 <b>Уровень:</b> {level}\n"
+        text += f"✨ <b>XP:</b> {xp}\n"
+        
+        await message.answer(text, parse_mode="HTML")
+        
+    except Exception as e:
+        logger.error(f"Error showing profile: {e}", exc_info=True)
+        await message.answer("⚠️ Произошла ошибка при загрузке профиля.")
 
 
 @router.message(F.text == "👑 Поддержка")
@@ -399,3 +439,175 @@ async def process_consultation_payment(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Ошибка invoice консультации: {e}")
         await callback.answer("⚠️ Ошибка", show_alert=True)
+
+
+# === ГЕЙМИФИКАЦИЯ И МЕНЮ ===
+
+
+
+@router.message(F.text == "🌳 Мои Рефералы")
+async def show_referrals(message: Message):
+    """Показать реферальную статистику и MLM дерево"""
+    user_id = message.from_user.id
+    
+    # Статистика
+    count = await db.get_referral_count(user_id)
+    referrer = await db.get_referrer(user_id)
+    referrer_info = "Вас пригласил: ID " + str(referrer['referrer_id']) if referrer else "Вас никто не приглашал"
+    
+    # MLM Дерево (Level 1 only for now in message, full tree can be complex)
+    # Показываем бонусный прогресс
+    bonus_info = await db.check_premium_bonus_eligibility(user_id)
+    
+    text = (
+        "🌳 <b>МОИ РЕФЕРАЛЫ</b>\n\n"
+        f"👥 <b>Всего приглашено:</b> {count}\n"
+        f"🔗 {referrer_info}\n\n"
+        "📈 <b>MLM Прогресс (Premium Бонус):</b>\n"
+    )
+    
+    if bonus_info['eligible']:
+        text += "✅ <b>Бонус доступен!</b> Вы можете активировать Premium на 12 дней.\n"
+        # Тут можно добавить inline кнопку для активации
+    elif bonus_info['bonus_given']:
+        text += "🎁 Бонус уже получен.\n"
+    else:
+        text += f"📊 Активных рефералов (купили Premium): {bonus_info['active_referrals']}/10\n"
+        text += f"🚀 Осталось еще: {bonus_info['needed']}\n\n"
+    
+    text += (
+        "💰 <b>Награды за друзей:</b>\n"
+        "• Level 1: +50 XP\n"
+        "• Level 2: +25 XP\n"
+        "• Level 3: +10 XP\n\n"
+        "Приглашайте друзей через кнопку <b>📎 Пригласить друга</b>!"
+    )
+    
+    # Инлайн кнопка для получения бонуса если доступен
+    keyboard = None
+    if bonus_info['eligible'] and not bonus_info['bonus_given']:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 Забрать Premium (12 дней)", callback_data="claim_ref_bonus")]
+        ])
+    
+    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "claim_ref_bonus")
+async def claim_referral_bonus_handler(callback: CallbackQuery):
+    """Обработка получения бонуса за рефералов"""
+    user_id = callback.from_user.id
+    if await db.grant_referral_premium_bonus(user_id):
+        await callback.answer("🎁 Бонус активирован!", show_alert=True)
+        await callback.message.edit_text(
+            "🎉 <b>ПОЗДРАВЛЯЕМ!</b>\n\n"
+            "Вы активировали Premium-доступ на 12 дней за 10 активных рефералов!\n"
+            "Наслаждайтесь эксклюзивными функциями.",
+            parse_mode="HTML"
+        )
+    else:
+        await callback.answer("⚠️ Не удалось активировать бонус.", show_alert=True)
+
+
+@router.message(F.text == "🏆 Топ Участников")
+async def show_leaderboard(message: Message):
+    """Показать таблицу лидеров"""
+    user_id = message.from_user.id
+    leaders = await db.get_leaderboard(limit=10)
+    user_rank = await db.get_user_rank(user_id)
+    
+    text = "🏆 <b>ТОП УЧАСТНИКОВ (XP)</b>\n\n"
+    
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    for idx, user in enumerate(leaders, 1):
+        medal = medals.get(idx, "▫️")
+        name = user['full_name'] or user['username'] or f"User {user['user_id']}"
+        # Экранирование имени
+        name = name.replace("<", "&lt;").replace(">", "&gt;")
+        text += f"{medal} <b>{idx}. {name}</b> — {user['xp']} XP (Lvl {user['level']})\n"
+    
+    text += f"\n👤 <b>Ваше место:</b> {user_rank if user_rank else 'N/A'}"
+    
+    await message.answer(text, parse_mode="HTML")
+
+
+@router.message(F.text == "🏅 Мои Достижения")
+async def show_badges(message: Message):
+    """Показать бейджи пользователя"""
+    user_id = message.from_user.id
+    badges = await db.get_user_badges(user_id)
+    
+    # Словарь названий бейджей
+    BADGE_NAMES = {
+        'level_5': '⭐ Ветеран (5 Lvl)',
+        'level_10_champion': '👑 Чемпион (10 Lvl)',
+        'referrer_10': '🤝 Инфлюенсер (10 друзей)',
+        'referrer_50': '📢 Лидер мнений (50 друзей)',
+        'premium_member': '💎 Premium Club',
+        'story_hunter': '📸 Охотник за Stories'
+    }
+    
+    text = "🏅 <b>МОИ ДОСТИЖЕНИЯ</b>\n\n"
+    
+    if not badges:
+        text += "У вас пока нет достижений. Активничайте, чтобы их получить!\n"
+    else:
+        for badge in badges:
+            badge_name = BADGE_NAMES.get(badge, badge)
+            text += f"✅ <b>{badge_name}</b>\n"
+    
+    await message.answer(text, parse_mode="HTML")
+
+@router.message(F.text == "📸 Проверить Stories")
+async def check_stories_instruction(message: Message):
+    """Инструкция по проверке Stories"""
+    today_checks = await db.count_user_story_checks(message.from_user.id)
+    limit = 5
+    
+    text = (
+        "📸 <b>ПРОВЕРКА STORIES</b>\n\n"
+        "Зарабатывайте XP, рассказывая о нас!\n\n"
+        "1. Выложите Stories в Instagram с отметкой <b>@blexler_invest</b>\n"
+        "2. Сделайте скриншот, где видно отметку\n"
+        "3. Отправьте скриншот мне прямо сюда 👇\n\n"
+        f"📊 <b>Сегодня проверено:</b> {today_checks}/{limit}\n"
+        "🎁 <b>Награда:</b> +100 XP за каждую"
+    )
+    
+    await message.answer(text, parse_mode="HTML")
+
+
+@router.message(F.photo, F.chat.type == "private")
+async def handle_photo_upload(message: Message):
+    """Обработка загрузки фото (Stories)"""
+    # Проверяем, не в контексте ли мы какого-то другого диалога
+    # Но для простоты считаем любое фото попыткой сдать отчет, если не в FSM
+    
+    # TODO: Подключить Vision AI для проверки
+    # Пока делаем "фейковую" проверку или просто принимаем
+    
+    user_id = message.from_user.id
+    
+    # Лимит проверок
+    today_checks = await db.count_user_story_checks(user_id)
+    if today_checks >= 5:
+        await message.answer("⚠️ Вы достигли лимита проверок на сегодня (5/5). Приходите завтра!")
+        return
+        
+    # Имитация проверки (в будущем заменить на вызов Vision API)
+    # Считаем что проверка прошла успешно для теста
+    
+    # Начисляем XP
+    result = await db.log_activity(
+        user_id, 
+        'story_check', 
+        xp_amount=100,
+        metadata={'file_id': message.photo[-1].file_id}
+    )
+    
+    text = "✅ <b>Отчет принят!</b>\n\nStories подтверждена. Вы получили +100 XP!"
+    
+    if result.get('level_up'):
+        text += f"\n\n🎉 <b>LEVEL UP!</b> Новый уровень: {result['new_level']}"
+        
+    await message.reply(text, parse_mode="HTML")

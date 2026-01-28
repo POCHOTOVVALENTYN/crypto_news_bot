@@ -18,6 +18,7 @@ def get_free_menu(user_id: int = None) -> ReplyKeyboardMarkup:
             KeyboardButton(text="👨‍💻 Об Авторе"),
             KeyboardButton(text="📞 Поддержка")
         ],
+
         [
             KeyboardButton(text="📎 Пригласить друга"),
             KeyboardButton(text="🎁 Розыгрыш BLEXLER")

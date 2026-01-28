@@ -18,6 +18,9 @@ from config import config
 from loader import bot, dp
 from database import db
 
+# === ПРОЦЕСС КОНТРОЛЬ ===
+from utils.process_control import check_single_instance, cleanup_pid
+
 from services.telegram_listener import listener
 from services.rate_limiter import RateLimiter
 
@@ -143,6 +146,11 @@ from handlers import admin_menu, user_start, user_menu, payments, ai_chat, gamif
 
 # Импорт middleware
 from middlewares.subscription_check import SubscriptionCheckMiddleware
+from middlewares.silent_mode import SilentModeMiddleware
+
+# === РЕГИСТРАЦИЯ Middleware ===
+# Silent Mode - самый приоритетный, ставим первым на outer_middleware
+dp.update.outer_middleware(SilentModeMiddleware())
 
 # === РЕГИСТРАЦИЯ РОУТЕРОВ ===
 dp.include_router(admin_menu.router)       # Админ-команды (высший приоритет)
@@ -168,6 +176,9 @@ async def main():
         logger.info("=" * 60)
         logger.info("🚀 CRYPTO NEWS BOT - ЗАПУСК")
         logger.info("=" * 60)
+
+        # 0. Проверка запуска единственного экземпляра
+        check_single_instance()
 
         # 1. Инициализация БД
         logger.info("📦 Инициализация базы данных...")
@@ -304,6 +315,7 @@ async def main():
 
     finally:
         logger.info("🧹 Очистка ресурсов...")
+        cleanup_pid()
 
         # Отменяем фоновые задачи
         if background_tasks:

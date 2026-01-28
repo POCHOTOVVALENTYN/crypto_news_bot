@@ -117,3 +117,7 @@ class AIProviderManager:
 
     def get_active_provider_names(self) -> List[str]:
         return [p.name for p in self.providers]
+
+
+# Глобальный экземпляр
+ai_manager = AIProviderManager()

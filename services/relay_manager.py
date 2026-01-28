@@ -14,6 +14,33 @@ from config import ADMIN_NAMES, SUPPORT_CASCADE
 logger = logging.getLogger(__name__)
 
 
+def _extract_content_info(message: Message) -> dict:
+    """Извлекает информацию о контенте сообщения для логов"""
+    try:
+        content_type = message.content_type
+        # Безопасно получаем текст или подпись
+        text = message.text or message.caption or ""
+        
+        if content_type == 'text':
+            return {'type': 'text', 'text': text}
+        elif content_type == 'photo':
+            return {'type': 'photo', 'text': f"[Photo] {text}".strip()}
+        elif content_type == 'voice':
+            return {'type': 'voice', 'text': "[Voice Message]"}
+        elif content_type == 'video':
+            return {'type': 'video', 'text': f"[Video] {text}".strip()}
+        elif content_type == 'document':
+            return {'type': 'document', 'text': f"[Document] {text}".strip()}
+        elif content_type == 'audio':
+            return {'type': 'audio', 'text': f"[Audio] {text}".strip()}
+        elif content_type == 'sticker':
+            return {'type': 'sticker', 'text': "[Sticker]"}
+        else:
+            return {'type': 'other', 'text': f"[{content_type}]"}
+    except Exception as e:
+        logger.error(f"Ошибка извлечения контента: {e}")
+        return {'type': 'unknown', 'text': "[Unknown Content]"}
+
 class RelayManager:
     """Управление Relay Mode - пересылка сообщений между пользователем и админом"""
     
@@ -42,21 +69,50 @@ class RelayManager:
         session_id = cursor.lastrowid
         await db.conn.commit()
         
-        # Уведомить админа
-        await RelayManager.notify_admin(session_id)
+        # Уведомить ВСЕХ админов
+        await RelayManager.notify_all_admins(session_id)
         
         logger.info(f"✅ Создана Relay сессия {session_id}: {session_type} для user {user_id}")
         return session_id
     
     @staticmethod
+    async def claim_session(session_id: int, admin_id: int):
+        """
+        Админ забирает сессию себе
+        """
+        await db.conn.execute(
+            """
+            UPDATE support_sessions 
+            SET current_admin_id = ?, last_activity = ?
+            WHERE id = ?
+            """,
+            (admin_id, datetime.now().isoformat(), session_id)
+        )
+        await db.conn.commit()
+        logger.info(f"✅ Админ {admin_id} забрал сессию {session_id}")
+
+    @staticmethod
+    async def notify_all_admins(session_id: int):
+        """Уведомить ВСЕХ админов о новой сессии"""
+        # Используем список ID из конфига
+        from config import ADMIN_IDS
+        
+        for admin_id in ADMIN_IDS:
+            await RelayManager.notify_admin_target(session_id, admin_id)
+            
+    @staticmethod
     async def notify_admin(session_id: int):
-        """Отправить уведомление админу о новой сессии"""
+        """Deprecated: Use notify_all_admins or notify_admin_target"""
+        await RelayManager.notify_all_admins(session_id)
+
+    @staticmethod
+    async def notify_admin_target(session_id: int, admin_id: int):
+        """Отправить уведомление КОНКРЕТНОМУ админу"""
         session = await RelayManager.get_session(session_id)
         if not session:
             return
         
         user_id = session['user_id']
-        admin_id = session['current_admin_id']
         session_type = session['type']
         
         # Получить инфо о пользователе
@@ -118,7 +174,7 @@ class RelayManager:
     
     @staticmethod
     async def relay_to_admin(session_id: int, message: Message):
-        """Переслать сообщение пользователя админу"""
+        """Переслать сообщение пользователя админу (Text + Media)"""
         session = await RelayManager.get_session(session_id)
         if not session or session['status'] != 'active':
             return
@@ -126,42 +182,55 @@ class RelayManager:
         admin_id = session['current_admin_id']
         user_id = session['user_id']
         
-        # Сохранить в БД
+        # 1. Извлекаем инфо для БД
+        content_info = _extract_content_info(message)
+        
+        # 2. Сохраняем в БД
         await RelayManager.save_message(
             session_id=session_id,
             from_user_id=user_id,
             to_user_id=admin_id,
-            message_text=message.text,
-            message_type='text',
+            message_text=content_info['text'],
+            message_type=content_info['type'],
             telegram_message_id=message.message_id
         )
         
-        # Получить инфо о пользователе
+        # 3. Инфо о пользователе для заголовка
         user = await db.get_user(user_id)
-        
         if user:
             username = f"@{user.get('username', '')}" if user.get('username') else f"ID:{user_id}"
             full_name = user.get('full_name', 'Пользователь')
         else:
             username = f"ID:{user_id}"
             full_name = "Пользователь"
-        
-        # Отправить админу
-        text = f"👤 [{full_name}] {username}:\n\n{message.text}"
+            
+        header_text = f"👤 <b>{full_name}</b> {username}:"
         
         try:
-            await bot.send_message(admin_id, text)
-            logger.info(f"📨 Сообщение от user {user_id} переслано админу {admin_id}")
+            # 4. Отправляем в чат админу
+            # Сначала заголовок, чтобы понятно от кого
+            await bot.send_message(admin_id, header_text, parse_mode="HTML")
+            
+            # Затем копируем само сообщение (медиа, текст, все что угодно)
+            await bot.copy_message(
+                chat_id=admin_id,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="❌ Завершить чат", callback_data=f"relay_close_{session_id}")]
+                ])
+            )
+            logger.info(f"📨 Сообщение ({content_info['type']}) от user {user_id} переслано админу {admin_id}")
+            
         except Exception as e:
             logger.error(f"❌ Ошибка пересылки сообщения админу {admin_id}: {e}")
 
-        
         # Обновить активность
         await RelayManager.update_activity(session_id)
     
     @staticmethod
     async def relay_to_user(session_id: int, admin_message: Message):
-        """Переслать ответ админа пользователю"""
+        """Переслать ответ админа пользователю (Text + Media)"""
         session = await RelayManager.get_session(session_id)
         if not session or session['status'] != 'active':
             return
@@ -169,30 +238,43 @@ class RelayManager:
         user_id = session['user_id']
         admin_id = session['current_admin_id']
         
-        # Сохранить в БД
+        # 1. Извлекаем инфо для БД
+        content_info = _extract_content_info(admin_message)
+        
+        # 2. Сохранить в БД
         await RelayManager.save_message(
             session_id=session_id,
             from_user_id=admin_id,
             to_user_id=user_id,
-            message_text=admin_message.text,
-            message_type='text',
+            message_text=content_info['text'],
+            message_type=content_info['type'],
             telegram_message_id=admin_message.message_id
         )
         
         # Получить имя админа
         admin_name = ADMIN_NAMES.get(admin_id, "Поддержка")
         
-        # Отправить пользователю
-        text = f"[{admin_name}]: {admin_message.text}"
-        
         try:
-            await bot.send_message(user_id, text)
-            logger.info(f"📨 Ответ от админа {admin_id} отправлен user {user_id}")
+            # 3. Отправляем пользователю Action "typing"
+            await bot.send_chat_action(user_id, action="typing")
+            
+            # 4. Копируем сообщение
+            await bot.copy_message(
+                chat_id=user_id,
+                from_chat_id=admin_message.chat.id,
+                message_id=admin_message.message_id,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="❌ Завершить чат", callback_data=f"user_close_{session_id}")]
+                ])
+            )
+            logger.info(f"📨 Ответ ({content_info['type']}) от админа {admin_id} отправлен user {user_id}")
         except Exception as e:
             logger.error(f"❌ Ошибка отправки ответа user {user_id}: {e}")
         
         # Обновить активность
         await RelayManager.update_activity(session_id)
+
+
     
     @staticmethod
     async def escalate_session(session_id: int):
@@ -286,6 +368,19 @@ class RelayManager:
         cursor = await db.conn.execute(
             "SELECT * FROM support_sessions WHERE user_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1",
             (user_id,)
+        )
+        row = await cursor.fetchone()
+        if row:
+            columns = [desc[0] for desc in cursor.description]
+            return dict(zip(columns, row))
+        return None
+
+    @staticmethod
+    async def get_admin_active_session(admin_id: int) -> Optional[Dict]:
+        """Получить активную сессию, которую ведет админ"""
+        cursor = await db.conn.execute(
+            "SELECT * FROM support_sessions WHERE current_admin_id = ? AND status = 'active' ORDER BY last_activity DESC LIMIT 1",
+            (admin_id,)
         )
         row = await cursor.fetchone()
         if row:

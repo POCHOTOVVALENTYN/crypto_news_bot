@@ -4,6 +4,7 @@
 from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
+from aiogram.filters import StateFilter
 import logging
 
 from database import db
@@ -14,10 +15,11 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
-@router.message(F.text == "🏆 Топ Участников")
-@router.message(F.text == "🏆 Лидерборд")  # Обратная совместимость
-async def show_leaderboard(message: Message):
+@router.message(F.text == "🏆 Топ Участников", StateFilter("*"))
+@router.message(F.text == "🏆 Лидерборд", StateFilter("*"))  # Обратная совместимость
+async def show_leaderboard(message: Message, state: FSMContext):
     """Показать топ-10 участников розыгрыша"""
+    await state.clear()
     user_id = message.from_user.id
     
     # Получаем топ-10
@@ -59,9 +61,10 @@ async def show_leaderboard(message: Message):
 
 # === ПРОВЕРКА INSTAGRAM STORIES ===
 
-@router.message(F.text == "📸 Проверить Stories")
+@router.message(F.text == "📸 Проверить Stories", StateFilter("*"))
 async def request_story_proof(message: Message, state: FSMContext):
     """Запрос скриншота Stories для проверки"""
+    await state.clear()
     user_id = message.from_user.id
     
     # 🔒 RATE LIMITING: макс 5 проверок в день
@@ -175,9 +178,10 @@ async def invalid_story_upload(message: Message):
 
 # === РЕФЕРАЛЬНАЯ СИСТЕМА ===
 
-@router.message(F.text == "🌳 Мои Рефералы")
-async def show_my_referrals(message: Message):
+@router.message(F.text == "🌳 Мои Рефералы", StateFilter("*"))
+async def show_my_referrals(message: Message, state: FSMContext):
     """Показать статистику рефералов пользователя"""
+    await state.clear()
     user_id = message.from_user.id
     
     # Получаем дерево рефералов
@@ -242,9 +246,10 @@ async def show_my_referrals(message: Message):
     logger.info(f"🌳 Рефералы показаны: {user_id} (L1:{len(level1)}, active:{active_count})")
 
 
-@router.message(F.text == "📎 Пригласить друга")
-async def share_referral_link(message: Message):
+@router.message(F.text == "📎 Пригласить друга", StateFilter("*"))
+async def share_referral_link(message: Message, state: FSMContext):
     """Генерация и отправка реферальной ссылки"""
+    await state.clear()
     user_id = message.from_user.id
     
     # Получаем username бота
@@ -274,10 +279,11 @@ async def share_referral_link(message: Message):
 
 # === ИСТОРИЯ STORIES ===
 
-@router.message(F.text == "📜 История Проверок")
-@router.message(F.text == "📜 История Stories")  # Обратная совместимость
-async def show_story_history(message: Message):
+@router.message(F.text == "📜 История Проверок", StateFilter("*"))
+@router.message(F.text == "📜 История Stories", StateFilter("*"))  # Обратная совместимость
+async def show_story_history(message: Message, state: FSMContext):
     """История проверок Stories"""
+    await state.clear()
     user_id = message.from_user.id
     
     history = await db.get_user_story_history(user_id, limit=10)
@@ -331,10 +337,11 @@ BADGE_NAMES = {
     'trader_pro': '📈 Профи Трейдер'
 }
 
-@router.message(F.text == "🏅 Мои Достижения")
-@router.message(F.text == "🏅 Мои Бейджи")  # Обратная совместимость
-async def show_badges(message: Message):
+@router.message(F.text == "🏅 Мои Достижения", StateFilter("*"))
+@router.message(F.text == "🏅 Мои Бейджи", StateFilter("*"))  # Обратная совместимость
+async def show_badges(message: Message, state: FSMContext):
     """Показать достижения пользователя"""
+    await state.clear()
     user_id = message.from_user.id
     
     # Проверяем и выдаём новые бейджи

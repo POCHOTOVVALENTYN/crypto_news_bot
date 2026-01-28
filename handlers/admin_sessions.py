@@ -22,7 +22,7 @@ def admin_filter(user_id: int) -> bool:
 
 # === ПРОСМОТР СЕССИЙ ПОДДЕРЖКИ ===
 
-@router.message(F.text == "📊 Активные Сессии")
+@router.message(F.text == "📊 Сессии Поддержки")
 async def show_active_sessions(message: Message):
     """Админ: показать активные сессии поддержки"""
     user_id = message.from_user.id

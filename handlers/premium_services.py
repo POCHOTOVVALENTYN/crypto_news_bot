@@ -13,7 +13,7 @@ from aiogram.fsm.context import FSMContext
 
 from database import db
 from loader import bot
-from config import CONSULTATION_PRICES, ADMIN_NAMES
+from config import CONSULTATION_PRICES, ADMIN_NAMES, ADMIN_IDS
 from services.relay_manager import relay_manager
 from utils.states import SupportState, ConsultationState
 
@@ -243,7 +243,7 @@ async def cancel_consultation(callback: CallbackQuery, state: FSMContext):
 
 # === RELAY MODE - ПЕРЕХВАТ СООБЩЕНИЙ ===
 
-@router.message(SupportState.active_session)
+@router.message(SupportState.active_session, ~F.from_user.id.in_(ADMIN_IDS), F.content_type.in_({'text', 'photo', 'voice', 'video', 'document', 'audio', 'sticker'}))
 async def handle_support_message(message: Message, state: FSMContext):
     """Обработка сообщений во время активной сессии поддержки"""
     data = await state.get_data()
@@ -267,7 +267,7 @@ async def handle_support_message(message: Message, state: FSMContext):
 # === ADMIN CALLBACKS ===
 
 @router.callback_query(F.data.startswith("relay_connect_"))
-async def admin_connect_to_session(callback: CallbackQuery):
+async def admin_connect_to_session(callback: CallbackQuery, state: FSMContext):
     """Админ подключается к сессии"""
     session_id = int(callback.data.split("_")[2])
     admin_id = callback.from_user.id
@@ -279,6 +279,13 @@ async def admin_connect_to_session(callback: CallbackQuery):
     
     user_id = session['user_id']
     admin_name = ADMIN_NAMES.get(admin_id, "Поддержка")
+
+    # Админ забирает сессию себе
+    await relay_manager.claim_session(session_id, admin_id)
+    
+    # Устанавливаем состояние администратора
+    await state.set_state(SupportState.active_session)
+    await state.update_data(session_id=session_id)
     
     # Уведомляем пользователя
     await bot.send_message(
@@ -298,6 +305,109 @@ async def admin_connect_to_session(callback: CallbackQuery):
     logger.info(f"✅ Админ {admin_id} подключился к сессии {session_id}")
 
 
+@router.message(F.from_user.id.in_(ADMIN_IDS), lambda m: not (m.text and m.text.startswith("/")))
+async def handle_admin_support_message(message: Message, state: FSMContext):
+    """
+    Обработка ответов админа.
+    Поддерживает восстановление сессии, если бот был перезагружен.
+    """
+    user_id = message.from_user.id
+    
+    # 1. Проверяем текущее состояние FSM
+    current_state = await state.get_state()
+    data = await state.get_data()
+    session_id = data.get('session_id')
+    
+    # 2. Если состояния нет, проверяем БД (восстановление после рестарта)
+    if not session_id:
+        active_session = await relay_manager.get_admin_active_session(user_id)
+        if active_session:
+            session_id = active_session['id']
+            # Восстанавливаем состояние
+            await state.set_state(SupportState.active_session)
+            await state.update_data(session_id=session_id)
+            logger.info(f"🔄 Сессия {session_id} восстановлена для админа {user_id}")
+        else:
+            # Если ни в FSM, ни в БД нет сессии - игнорируем (пусть обрабатывают другие хендлеры)
+            # Но так как мы уже здесь, другие хендлеры не сработают.
+            # Поэтому, если это просто текст и нет сессии - можно ничего не делать или ответить.
+            # Для админов лучше молчать, чтобы не спамить.
+            return
+            
+    # Пересылаем ответ пользователю
+    await relay_manager.relay_to_user(session_id, message)
+    
+    # Реакция для подтверждения
+    try:
+        await message.react([type('ReactionTypeEmoji', (object,), {'emoji': '👌'})])
+    except:
+        pass
+
+
+@router.callback_query(F.data.startswith("user_close_"))
+async def user_close_session(callback: CallbackQuery, state: FSMContext):
+    """Пользователь закрывает сессию"""
+    try:
+        session_id = int(callback.data.split("_")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    
+    session = await relay_manager.get_session(session_id)
+    if not session:
+        await callback.answer("Сессия не найдена", show_alert=True)
+        return
+
+    if session.get('status') != 'active':
+        await callback.answer("Диалог уже завершен", show_alert=True)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Уже завершено", callback_data="noop")]
+            ]))
+        except:
+            pass
+        return
+    
+    # Проверка прав (на всякий случай)
+    if session['user_id'] != user_id:
+        await callback.answer("Это не ваша сессия", show_alert=True)
+        return
+
+    admin_id = session.get('current_admin_id')
+
+    # Закрываем сессию
+    await relay_manager.close_session(session_id, status='user_closed')
+    
+    # Очищаем состояние
+    await state.clear()
+    
+    # Уведомляем пользователя
+    await callback.answer("Диалог завершен")
+    try:
+        await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Диалог завершен", callback_data="noop")]
+        ]))
+        # Отправляем отдельное сообщение, чтобы было понятно
+        await callback.message.answer("✅ Диалог завершен. Спасибо за обращение!", parse_mode="HTML")
+    except Exception:
+        pass
+    
+    # Уведомляем админа
+    if admin_id:
+        try:
+             await bot.send_message(
+                admin_id,
+                f"ℹ️ <b>Пользователь завершил диалог (Сессия {session_id})</b>",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify admin {admin_id} about user close: {e}")
+        
+    logger.info(f"✅ Сессия {session_id} закрыта пользователем {user_id}")
+
+
 @router.callback_query(F.data.startswith("relay_close_"))
 async def admin_close_session(callback: CallbackQuery):
     """Админ закрывает сессию"""
@@ -306,6 +416,16 @@ async def admin_close_session(callback: CallbackQuery):
     session = await relay_manager.get_session(session_id)
     if not session:
         await callback.answer("Сессия не найдена", show_alert=True)
+        return
+    
+    if session.get('status') != 'active':
+        await callback.answer("Сессия уже закрыта", show_alert=True)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Уже закрыто", callback_data="noop")]
+            ]))
+        except:
+            pass
         return
     
     user_id = session['user_id']

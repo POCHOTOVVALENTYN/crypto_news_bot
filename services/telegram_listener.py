@@ -140,7 +140,22 @@ class TelegramListener:
                     logger.warning(f"⏱️ AI анализ Userbot новости превысил таймаут (30 секунд), пропускаем")
                     return
 
-                if processed and processed.get('importance', 0) >= 5:
+                try:
+                    importance_str = str(processed.get('importance', '0')).strip()
+                    # Если AI вернуло 'High', 'Low' и т.д.
+                    if importance_str.lower() == 'high':
+                        importance = 9
+                    elif importance_str.lower() == 'medium':
+                        importance = 5
+                    elif importance_str.lower() == 'low':
+                        importance = 2
+                    else:
+                        # Пытаемся преобразовать число, убирая лишние символы
+                        importance = int(''.join(filter(str.isdigit, importance_str)) or 0)
+                except Exception:
+                    importance = 0
+
+                if processed and importance >= 5:
                     title = processed.get('summary', raw_text[:200])
                     if await db.is_duplicate_by_content(title, threshold=85):
                         logger.info(f"♻️ Дубликат пропущен: {title}")

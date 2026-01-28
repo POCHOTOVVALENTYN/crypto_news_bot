@@ -67,6 +67,15 @@ async def nav_main_menu(message: Message, state: FSMContext):
     await cmd_admin_main_menu(message, state)
 
 
+@router.message(F.text == "📅 План на день", F.func(lambda m: admin_filter(m.from_user.id)))
+async def show_daily_plan(message: Message):
+    """Генерация плана на день"""
+    await message.answer("⏳ Анализирую рынок и составляю план...")
+    from services.personal_assistant import personal_assistant
+    plan = await personal_assistant.generate_daily_plan()
+    await message.answer(f"📅 <b>План на сегодня:</b>\n\n{plan}", parse_mode="HTML")
+
+
 # === РЕЖИМ ПОСТИНГА ===
 
 @router.message(F.text == "📰 Режим Постинга", F.func(lambda m: admin_filter(m.from_user.id)))
@@ -86,7 +95,7 @@ async def enter_posting_mode(message: Message, state: FSMContext):
 @router.message(F.text == "👤 Режим Free User", F.func(lambda m: admin_filter(m.from_user.id)))
 async def enter_free_user_mode(message: Message, state: FSMContext):
     """Эмуляция Free пользователя"""
-    await state.set_state(AdminStates.free_user_mode)
+    await state.clear()  # Очищаем состояние, чтобы работали стандартные хендлеры
     await message.answer(
         "🔧 <b>Режим тестирования: Free User</b>\n\n"
         "Вы видите меню обычного пользователя.\n"
@@ -101,7 +110,7 @@ async def enter_free_user_mode(message: Message, state: FSMContext):
 @router.message(F.text == "👑 Режим Premium User", F.func(lambda m: admin_filter(m.from_user.id)))
 async def enter_premium_user_mode(message: Message, state: FSMContext):
     """Эмуляция Premium пользователя"""
-    await state.set_state(AdminStates.premium_user_mode)
+    await state.clear()  # Очищаем состояние, чтобы работали стандартные хендлеры
     await message.answer(
         "🔧 <b>Режим тестирования: Premium User</b>\n\n"
         "Вы видите меню Premium подписчика.\n"
@@ -116,7 +125,7 @@ async def enter_premium_user_mode(message: Message, state: FSMContext):
 @router.message(F.text == "🧪 Тестирование Фич", F.func(lambda m: admin_filter(m.from_user.id)))
 async def enter_testing_mode(message: Message, state: FSMContext):
     """Режим тестирования фич"""
-    await state.set_state(AdminStates.testing_mode)
+    await state.clear()
     await message.answer(
         "🧪 <b>Тестирование Фич</b>\n\n"
         "Быстрый доступ ко всем реализованным фичам:",

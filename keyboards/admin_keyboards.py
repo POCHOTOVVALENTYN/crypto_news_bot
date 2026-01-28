@@ -17,7 +17,8 @@ def get_admin_main_menu():
             ],
             [
                 KeyboardButton(text="🧪 Тестирование Фич"),
-                KeyboardButton(text="📊 Dashboard")
+                KeyboardButton(text="📊 Dashboard"),
+                KeyboardButton(text="📅 План на день")
             ],
             [
                 KeyboardButton(text="📊 Сессии Поддержки"),
