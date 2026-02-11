@@ -53,16 +53,51 @@ class NewsDatabase:
                         await db.execute("ALTER TABLE news ADD COLUMN telegram_message_id INTEGER")
                         await db.commit()
                         logger.info("✅ Добавлена колонка telegram_message_id в таблицу news")
+                    
+                    # ✅ НОВОЕ: Добавляем metadata для Telegram источников
+                    if 'metadata' not in columns:
+                        await db.execute("ALTER TABLE news ADD COLUMN metadata TEXT")
+                        await db.commit()
+                        logger.info("✅ Добавлена колонка metadata в таблицу news")
+                    
+                    # ✅ НОВОЕ: Добавляем digest_batch_id для группировки в дайджестах
+                    if 'digest_batch_id' not in columns:
+                        await db.execute("ALTER TABLE news ADD COLUMN digest_batch_id INTEGER")
+                        await db.commit()
+                        logger.info("✅ Добавлена колонка digest_batch_id в таблицу news")
                         
             except Exception as e:
                 # Игнорируем ошибки миграции
                 logger.debug(f"⚠️ Миграция: {e}")
+            
+            # ✅ МИГРАЦИЯ: Добавляем колонки для модерации Stories
+            try:
+                async with db.execute("PRAGMA table_info(user_activities)") as cursor:
+                    columns = [row[1] for row in await cursor.fetchall()]
+                    
+                    if 'verification_status' not in columns:
+                        await db.execute("ALTER TABLE user_activities ADD COLUMN verification_status TEXT")
+                        await db.execute("ALTER TABLE user_activities ADD COLUMN ai_confidence REAL")
+                        await db.execute("ALTER TABLE user_activities ADD COLUMN reviewed_by INTEGER")
+                        await db.execute("ALTER TABLE user_activities ADD COLUMN reviewed_at DATETIME")
+                        await db.execute("ALTER TABLE user_activities ADD COLUMN local_file_path TEXT")
+                        await db.execute("ALTER TABLE user_activities ADD COLUMN image_hash TEXT")
+                        await db.commit()
+                        logger.info("✅ Добавлены колонки для модерации Stories")
+            except Exception as e:
+                logger.debug(f"⚠️ Миграция модерации: {e}")
             
             # Добавляем индекс для быстрого поиска по приоритету
             await db.execute("""
                              CREATE INDEX IF NOT EXISTS idx_priority_posted 
                              ON news(priority DESC, posted_to_telegram, id ASC)
                              """)
+            
+            # Индекс для быстрого поиска проверок на модерации
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pending_stories 
+                ON user_activities(verification_status, created_at DESC)
+            """)
             
             # Таблица настроек (key-value store)
             await db.execute("""
@@ -236,6 +271,33 @@ class NewsDatabase:
                              )
                              """)
             
+            # ✅ НОВОЕ: Таблица дайджестов новостей
+            await db.execute("""
+                             CREATE TABLE IF NOT EXISTS news_digests
+                             (
+                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                 type TEXT NOT NULL,
+                                 published_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                 telegram_message_id INTEGER,
+                                 news_count INTEGER DEFAULT 0
+                             )
+                             """)
+            
+            # ✅ НОВОЕ: Таблица модерации breaking news
+            await db.execute("""
+                             CREATE TABLE IF NOT EXISTS pending_breaking_news
+                             (
+                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                 news_url TEXT NOT NULL,
+                                 detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                 admin_approved_by INTEGER DEFAULT NULL,
+                                 admin_decision TEXT DEFAULT 'pending',
+                                 published_at DATETIME DEFAULT NULL,
+                                 auto_published BOOLEAN DEFAULT 0,
+                                 FOREIGN KEY (news_url) REFERENCES news(url)
+                             )
+                             """)
+            
             # Таблица напоминаний о консультациях
             await db.execute("""
                              CREATE TABLE IF NOT EXISTS consultation_reminders
@@ -352,9 +414,25 @@ class NewsDatabase:
             logger.error(f"Ошибка при fuzzy matching: {e}")
             return False
 
+    async def save_custom_price(self, session_id: int, user_id: int, amount: int):
+        """Сохранить кастомную цену для сессии переговоров"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    """UPDATE support_sessions 
+                       SET custom_price = ? 
+                       WHERE id = ? AND user_id = ?""",
+                    (amount, session_id, user_id)
+                )
+                await db.commit()
+            logger.info(f"💰 Custom price {amount}⭐ saved for session {session_id}")
+        except Exception as e:
+            logger.error(f"Error saving custom price: {e}")
+            raise
+
     async def add_news(self, url: str, title: str, summary: str, source: str,
                        published_at: str, image_url: str = None, priority: int = 0,
-                       full_content: str = None) -> bool:
+                       full_content: str = None, metadata: str = None) -> bool:
         """
         Добавляет новость в БД
         
@@ -367,14 +445,15 @@ class NewsDatabase:
             image_url: URL изображения
             priority: Приоритет (0-10)
             full_content: Полный текст статьи (новое поле)
+            metadata: JSON с дополнительной информацией (Telegram каналы и т.д.)
         """
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(
                     """INSERT INTO news
-                           (url, title, summary, full_content, source, published_at, image_url, priority)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (url, title, summary, full_content, source, published_at, image_url, priority)
+                           (url, title, summary, full_content, source, published_at, image_url, priority, metadata)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (url, title, summary, full_content, source, published_at, image_url, priority, metadata)
                 )
                 await db.commit()
             return True
@@ -704,22 +783,49 @@ class NewsDatabase:
             return stats
     
     async def get_abandoned_funnel_users(self, hours: int = 2) -> List[Dict]:
-        """Получить пользователей, застрявших в воронке"""
+        """
+        Получить пользователей, застрявших в воронке.
+        Выбирает только АКТУАЛЬНЫЙ (последний) статус пользователя.
+        """
         from datetime import datetime, timedelta
-        cutoff_time = (datetime.now() - timedelta(hours=hours)).isoformat()
+        
+        # Время отсечки для первичного напоминания (2 часа назад)
+        cutoff_time_first = (datetime.now() - timedelta(hours=hours)).isoformat()
+        
+        # Время отсечки для ПОВТОРНОГО напоминания (24 часа назад)
+        cutoff_time_repeat = (datetime.now() - timedelta(hours=24)).isoformat()
         
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
-                async with db.execute(
-                    """SELECT user_id, step as last_step, happened_at
-                       FROM funnel_stats
-                       WHERE step IN ('offer_shown', 'price_objection')
-                       AND happened_at < ?
-                       ORDER BY happened_at ASC LIMIT 50""",
-                    (cutoff_time,)
-                ) as cursor:
-                    return [dict(row) for row in await cursor.fetchall()]
+                
+                # Сложный запрос: берем только ПОСЛЕДНЕЕ событие для каждого юзера
+                query = """
+                WITH LastUserSteps AS (
+                    SELECT 
+                        user_id, 
+                        step, 
+                        happened_at,
+                        ROW_NUMBER() OVER(PARTITION BY user_id ORDER BY happened_at DESC) as rn
+                    FROM funnel_stats
+                )
+                SELECT user_id, step as last_step, happened_at
+                FROM LastUserSteps
+                WHERE rn = 1 
+                AND (
+                    -- Случай 1: Пользователь увидел оффер > 2 часов назад и молчит
+                    (step IN ('offer_shown', 'price_objection') AND happened_at < ?)
+                    OR
+                    -- Случай 2: Мы уже напоминали, но прошло > 24 часов (можно напомнить еще раз)
+                    (step = 'followup_sent' AND happened_at < ?)
+                )
+                LIMIT 50
+                """
+                
+                async with db.execute(query, (cutoff_time_first, cutoff_time_repeat)) as cursor:
+                    results = await cursor.fetchall()
+                    return [dict(row) for row in results]
+                    
         except Exception as e:
             logger.error(f"Ошибка get_abandoned_funnel_users: {e}")
             return []
@@ -1020,7 +1126,8 @@ class NewsDatabase:
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
                 async with db.execute(
-                    """SELECT created_at, xp_earned, metadata
+                    """SELECT created_at, xp_earned, metadata, 
+                              verification_status, ai_confidence
                        FROM user_activities
                        WHERE user_id = ? AND activity_type = 'story_check'
                        ORDER BY created_at DESC
@@ -1032,6 +1139,192 @@ class NewsDatabase:
         except Exception as e:
             logger.error(f"Ошибка получения истории Stories: {e}")
             return []
+    
+    async def get_pending_story_reviews(self, limit: int = 20) -> List[Dict]:
+        """Получить список Stories на модерации"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute("""
+                    SELECT ua.id, ua.user_id, ua.created_at, ua.ai_confidence,
+                           ua.local_file_path, ua.metadata,
+                           u.username, u.full_name
+                    FROM user_activities ua
+                    LEFT JOIN users u ON ua.user_id = u.user_id
+                    WHERE ua.activity_type = 'story_check' 
+                    AND ua.verification_status = 'pending_review'
+                    ORDER BY ua.created_at ASC
+                    LIMIT ?
+                """, (limit,)) as cursor:
+                    return [dict(row) for row in await cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Ошибка получения очереди модерации: {e}")
+            return []
+    
+    async def approve_story_check(self, activity_id: int, admin_id: int) -> bool:
+        """Одобрить проверку Stories"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # Получаем user_id для начисления XP
+                async with db.execute(
+                    "SELECT user_id FROM user_activities WHERE id = ?", 
+                    (activity_id,)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if not row:
+                        return False
+                    user_id = row[0]
+                
+                # Обновляем статус
+                await db.execute("""
+                    UPDATE user_activities 
+                    SET verification_status = 'manual_approved',
+                        xp_earned = 100,
+                        reviewed_by = ?,
+                        reviewed_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (admin_id, activity_id))
+                await db.commit()
+                
+                # Начисляем XP
+                await self.add_xp(user_id, 100, 'story_manual_approval')
+                return True
+        except Exception as e:
+            logger.error(f"Ошибка одобрения Stories: {e}")
+            return False
+    
+    async def reject_story_check(self, activity_id: int, admin_id: int, reason: str = None) -> bool:
+        """Отклонить проверку Stories"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                import json
+                metadata_update = json.dumps({"rejection_reason": reason}) if reason else '{}'
+                await db.execute("""
+                    UPDATE user_activities 
+                    SET verification_status = 'manual_rejected',
+                        reviewed_by = ?,
+                        reviewed_at = CURRENT_TIMESTAMP,
+                        metadata = ?
+                    WHERE id = ?
+                """, (admin_id, metadata_update, activity_id))
+                await db.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Ошибка отклонения Stories: {e}")
+            return False
+    
+    async def check_story_ban(self, user_id: int) -> bool:
+        """Проверить, забанен ли пользователь для Stories"""
+        try:
+            from datetime import datetime
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute(
+                    "SELECT story_ban_until FROM users WHERE user_id = ?",
+                    (user_id,)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if not row or not row[0]:
+                        return False
+                    
+                    ban_until = datetime.fromisoformat(row[0])
+                    return datetime.now() < ban_until
+        except Exception as e:
+            logger.error(f"Ошибка проверки бана: {e}")
+            return False
+    
+    async def set_story_ban(self, user_id: int, hours: int = 24) -> bool:
+        """Установить временный бан для Stories"""
+        try:
+            from datetime import datetime, timedelta
+            ban_until = datetime.now() + timedelta(hours=hours)
+            
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "UPDATE users SET story_ban_until = ? WHERE user_id = ?",
+                    (ban_until.isoformat(), user_id)
+                )
+                await db.commit()
+                logger.info(f"⚠️ Пользователь {user_id} забанен до {ban_until}")
+                return True
+        except Exception as e:
+            logger.error(f"Ошибка установки бана: {e}")
+            return False
+    
+    async def check_abuse_pattern(self, user_id: int) -> bool:
+        """Проверить паттерн злоупотреблений (3+ отклонения подряд)"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute("""
+                    SELECT verification_status
+                    FROM user_activities
+                    WHERE user_id = ? AND activity_type = 'story_check'
+                    ORDER BY created_at DESC
+                    LIMIT 5
+                """, (user_id,)) as cursor:
+                    rows = await cursor.fetchall()
+                    
+                    if len(rows) < 3:
+                        return False
+                    
+                    # Проверяем последние 3 проверки
+                    recent_statuses = [row['verification_status'] for row in rows[:3]]
+                    rejected_count = sum(
+                        1 for status in recent_statuses 
+                        if status in ['auto_rejected', 'manual_rejected']
+                    )
+                    
+                    return rejected_count >= 3
+        except Exception as e:
+            logger.error(f"Ошибка проверки абьюза: {e}")
+            return False
+    
+    async def get_story_statistics(self) -> Dict:
+        """Получить статистику по Stories для админов"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                
+                # Общая статистика
+                async with db.execute("""
+                    SELECT 
+                        COUNT(*) as total,
+                        SUM(CASE WHEN verification_status = 'auto_approved' THEN 1 ELSE 0 END) as auto_approved,
+                        SUM(CASE WHEN verification_status = 'auto_rejected' THEN 1 ELSE 0 END) as auto_rejected,
+                        SUM(CASE WHEN verification_status = 'pending_review' THEN 1 ELSE 0 END) as pending,
+                        SUM(CASE WHEN verification_status = 'manual_approved' THEN 1 ELSE 0 END) as manual_approved,
+                        SUM(CASE WHEN verification_status = 'manual_rejected' THEN 1 ELSE 0 END) as manual_rejected,
+                        AVG(ai_confidence) as avg_confidence
+                    FROM user_activities
+                    WHERE activity_type = 'story_check'
+                """) as cursor:
+                    row = await cursor.fetchone()
+                    stats = dict(row) if row else {}
+                
+                # Статистика по AI провайдерам
+                async with db.execute("""
+                    SELECT metadata
+                    FROM user_activities
+                    WHERE activity_type = 'story_check' AND metadata IS NOT NULL
+                """) as cursor:
+                    rows = await cursor.fetchall()
+                    
+                    import json
+                    provider_counts = {}
+                    for row in rows:
+                        try:
+                            metadata = json.loads(row['metadata'])
+                            provider = metadata.get('ai_provider', 'unknown')
+                            provider_counts[provider] = provider_counts.get(provider, 0) + 1
+                        except:
+                            pass
+                    
+                    stats['provider_counts'] = provider_counts
+                
+                return stats
+        except Exception as e:
+            logger.error(f"Ошибка получения статистики: {e}")
+            return {}
     
     async def create_badges_table(self):
         """Создать таблицу бейджей достижений"""
@@ -1104,12 +1397,21 @@ class NewsDatabase:
         if user.get('status') == 'premium':
             await self.award_badge(user_id, 'premium_member')
         
-        # Story checker
-        story_count = await db.execute(
-            "SELECT COUNT(*) FROM user_activities WHERE user_id=? AND activity_type='story_check'",
-            (user_id,)
-        )
-        if story_count and (await story_count.fetchone())[0] >= 10:
+        # Story checker badge
+        # Use the existing method instead of raw db.execute
+        total_story_count = 0
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute(
+                    "SELECT COUNT(*) FROM user_activities WHERE user_id=? AND activity_type='story_check'",
+                    (user_id,)
+                ) as cursor:
+                    result = await cursor.fetchone()
+                    total_story_count = result[0] if result else 0
+        except Exception as e:
+            logger.error(f"Error counting stories for badges: {e}")
+        
+        if total_story_count >= 10:
             await self.award_badge(user_id, 'story_hunter')
 
 

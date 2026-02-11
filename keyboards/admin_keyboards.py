@@ -16,7 +16,7 @@ def get_admin_main_menu():
                 KeyboardButton(text="👑 Режим Premium User")
             ],
             [
-                KeyboardButton(text="🧪 Тестирование Фич"),
+                KeyboardButton(text="📋 Модерация Stories"),
                 KeyboardButton(text="📊 Dashboard"),
                 KeyboardButton(text="📅 План на день")
             ],

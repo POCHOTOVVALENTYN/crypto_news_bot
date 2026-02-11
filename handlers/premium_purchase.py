@@ -77,16 +77,45 @@ async def premium_check_discount(callback: CallbackQuery, state: FSMContext):
     
     await callback.answer()
     
-    # Проверяем подписки на канал и чат
-    is_subscribed_channel = await check_subscription(user_id, "@blexler_invest")
-    is_subscribed_chat = await check_subscription(user_id, "-1001234567890")  # ID чата
+    # ===== SUBSCRIPTION CHECKS DISABLED =====
+    # Каналы не настроены, проверка отключена
+    # TODO: Настроить реальные каналы и раскомментировать
     
-    if is_subscribed_channel and is_subscribed_chat:
+    # is_subscribed_channel = await check_subscription(user_id, "@blexler_invest")
+    # is_subscribed_chat = await check_subscription(user_id, "-1001234567890")
+    
+    # Временно пропускаем проверку подписки
+    is_subscribed_channel = True
+    is_subscribed_chat = True
+    
+    if not (is_subscribed_channel and is_subscribed_chat):
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📢 Подписаться на канал",
+                url="https://t.me/blexler_invest"  # TODO: Заменить на реальный канал
+            )],
+            [InlineKeyboardButton(
+                text="✅ Я подписался, проверить",
+                callback_data="premium_recheck_subscription"
+            )],
+            [InlineKeyboardButton(
+                text="❌ Всё равно дорого",
+                callback_data="premium_still_expensive"
+            )]
+        ])
+        
+        await callback.message.edit_text(
+            "🎁 <b>ПОЛУЧИТЕ СКИДКУ 100$!</b>\n\n"
+            "Для получения скидки, пожалуйста, подпишитесь на наш канал:\n"
+            "👉 @blexler_invest\n\n"
+            "После подписки нажмите 'Я подписался, проверить'.",
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        await state.set_state(PriceNegotiationState.checking_subscriptions)
+    else:
         # Предложить скидку
         await show_discount_offer(callback.message, state)
-    else:
-        # Предложить подписаться
-        await show_subscribe_for_discount(callback.message, state)
 
 
 async def check_subscription(user_id: int, channel_id: str) -> bool:
@@ -138,15 +167,20 @@ async def show_subscribe_for_discount(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "premium_recheck_subscription")
 async def recheck_subscription(callback: CallbackQuery, state: FSMContext):
-    """Повторная проверка подписок"""
+    """Повторная проверка подписки"""
     user_id = callback.from_user.id
+    await callback.answer()
     
-    await callback.answer("Проверяем подписки...")
+    # ===== SUBSCRIPTION CHECKS DISABLED =====
+    # is_subscribed_channel = await check_subscription(user_id, "@blexler_invest")
+    # is_subscribed_chat = await check_subscription(user_id, "-1001234567890")
     
-    is_subscribed_channel = await check_subscription(user_id, "@blexler_invest")
-    is_subscribed_chat = await check_subscription(user_id, "-1001234567890")
+    # Временно пропускаем проверку
+    is_subscribed_channel = True
+    is_subscribed_chat = True
     
     if is_subscribed_channel and is_subscribed_chat:
+        await callback.message.edit_text("✅ Подписка подтверждена! Теперь выберите способ оплаты:")
         await show_discount_offer(callback.message, state)
     else:
         missing = []
@@ -542,6 +576,16 @@ async def premium_cancel(callback: CallbackQuery, state: FSMContext):
     )
     await state.clear()
     await callback.answer()
+
+@router.callback_query(F.data == "premium_delete_message")
+async def premium_delete_message(callback: CallbackQuery, state: FSMContext):
+    """Удалить сообщение (кнопка 'Спасибо')"""
+    try:
+        await callback.message.delete()
+        # Можно отправить тихое подтверждение, но лучше просто удалить молча
+    except Exception as e:
+        logger.error(f"Ошибка удаления сообщения: {e}")
+        await callback.answer()
 
 
 logger.info("✅ Premium Purchase handlers зарегистрированы")

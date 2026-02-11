@@ -8,21 +8,21 @@ import logging
 # === АДМИНИСТРАТОРЫ ===
 ADMIN_IDS = [
     830196453,   # Валентин
-    304050247,   # BLEXLER (Основатель)
+    # 304050247,   # BLEXLER (Основатель) - REMOVED: chat not found
     1363924657   # Ярослав
 ]
 
 ADMIN_NAMES = {
     830196453: "Валентин",
-    304050247: "BLEXLER",
+    # 304050247: "BLEXLER",  # REMOVED: chat not found
     1363924657: "Ярослав"
 }
 
 # Каскад поддержки (порядок эскалации)
 SUPPORT_CASCADE = [
-    304050247,   # 1. Основатель BLEXLER
-    830196453,   # 2. Валентин
-    1363924657   # 3. Ярослав
+    # 304050247,   # 1. Основатель BLEXLER - REMOVED: chat not found
+    830196453,   # 1. Валентин
+    1363924657   # 2. Ярослав
 ]
 
 def is_admin(user_id: int) -> bool:
@@ -58,6 +58,10 @@ PREMIUM_PRICES = {
         'discount_amount': 100
     }
 }
+
+# === AI VISION SETTINGS ===
+# Отключить OpenAI Vision fallback если нет квоты
+OPENAI_VISION_ENABLED = False  # Set to True if you have OpenAI quota
 
 
 class Settings(BaseSettings):

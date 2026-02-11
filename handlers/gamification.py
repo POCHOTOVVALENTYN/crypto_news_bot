@@ -106,6 +106,18 @@ async def verify_story_photo(message: Message, state: FSMContext):
     """Проверка загруженного скриншота Stories"""
     user_id = message.from_user.id
     
+    # Проверяем бан
+    is_banned = await db.check_story_ban(user_id)
+    if is_banned:
+        await state.clear()
+        await message.answer(
+            "⚠️ <b>Временное ограничение</b>\n\n"
+            "Вы временно не можете отправлять Stories из-за множественных отклонений.\n"
+            "Попробуйте позже или обратитесь в поддержку.",
+            parse_mode="HTML"
+        )
+        return
+    
     # Показываем что обрабатываем
     processing_msg = await message.answer("🔍 Проверяю скриншот...")
     
@@ -119,7 +131,67 @@ async def verify_story_photo(message: Message, state: FSMContext):
         # Очищаем состояние
         await state.clear()
         
-        if result['verified']:
+        # Сохраняем в БД с новыми полями
+        import json
+        import aiosqlite
+        
+        # Формируем полные metadata с AI-ответом
+        metadata = {
+            'file_id': photo.file_id,
+            'ai_provider': result.get('ai_provider', 'unknown'),
+            'ai_response': result.get('ai_response'),
+            'is_instagram': result.get('is_instagram', True),
+            'quality_ok': result.get('quality_ok', True)
+        }
+        
+        async with aiosqlite.connect(db.db_path) as conn:
+            await conn.execute("""
+                INSERT INTO user_activities 
+                (user_id, activity_type, xp_earned, metadata, verification_status, 
+                 ai_confidence, local_file_path, image_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                user_id,
+                'story_check',
+                result['xp_earned'],
+                json.dumps(metadata, ensure_ascii=False),
+                result['verification_status'],
+                result.get('confidence', 0.0),
+                result.get('local_file_path'),
+                result.get('image_hash')
+            ))
+            await conn.commit()
+        
+        # Обработка разных статусов
+        if result['verification_status'] == 'pending_review':
+            # На модерации
+            await processing_msg.edit_text(
+                "⏳ <b>Отправлено на проверку</b>\n\n"
+                f"Причина: {result['reason']}\n\n"
+                "Модератор проверит ваш скриншот в течение 24 часов.\n"
+                "Результат придёт в личные сообщения.",
+                parse_mode="HTML"
+            )
+            logger.info(f"⏳ Stories на модерации: {user_id}")
+            
+            # Уведомляем админов
+            from loader import bot
+            from config import ADMIN_IDS
+            for admin_id in ADMIN_IDS:
+                try:
+                    await bot.send_message(
+                        admin_id,
+                        f"📋 <b>Новая Stories на модерации!</b>\n"
+                        f"Пользователь: {message.from_user.full_name} (ID: {user_id})\n"
+                        f"AI confidence: {result.get('confidence', 0)*100:.0f}%\n"
+                        f"Причина: {result['reason']}\n\n"
+                        f"Перейти в панель: /admin → 📋 Модерация Stories",
+                        parse_mode="HTML"
+                    )
+                except:
+                    pass
+        
+        elif result['verified']:
             # ✅ Проверка пройдена!
             xp_result = await db.log_activity(
                 user_id,
@@ -156,6 +228,18 @@ async def verify_story_photo(message: Message, state: FSMContext):
                 parse_mode="HTML"
             )
             logger.warning(f"❌ Stories проверка не пройдена: {user_id} - {result['reason']}")
+            
+            # Проверяем паттерн злоупотреблений
+            is_abuse = await db.check_abuse_pattern(user_id)
+            if is_abuse:
+                await db.set_story_ban(user_id, hours=24)
+                await message.answer(
+                    "⚠️ <b>Внимание!</b>\n\n"
+                    "Обнаружено множество отклоненных проверок.\n"
+                    "Вы временно не можете отправлять Stories (до 24ч).\n\n"
+                    "Пожалуйста, убедитесь в качестве скриншотов перед отправкой.",
+                    parse_mode="HTML"
+                )
             
     except Exception as e:
         logger.error(f"Ошибка проверки Stories {user_id}: {e}", exc_info=True)
@@ -301,23 +385,66 @@ async def show_story_history(message: Message, state: FSMContext):
     
     for idx, entry in enumerate(history, 1):
         from datetime import datetime
+        import json
+        
         date = datetime.fromisoformat(entry['created_at']).strftime('%d.%m %H:%M')
         xp = entry['xp_earned']
-        status = "✅" if xp > 0 else "❌"
+        status = entry.get('verification_status', 'unknown')
+        confidence = entry.get('ai_confidence', 0.0)
         
-        text += f"{idx}. {status} {date} - "
+        # Парсим metadata для получения ai_provider
+        metadata = {}
+        try:
+            if entry.get('metadata'):
+                metadata = json.loads(entry['metadata'])
+        except:
+            pass
+        
+        ai_provider = metadata.get('ai_provider', 'unknown')
+        
+        # Статусные бейджи
+        status_badges = {
+            'auto_approved': '✅ Авто-одобрено',
+            'auto_rejected': '❌ Авто-отклонено',
+            'pending_review': '⏳ На модерации',
+            'manual_approved': '✅ Одобрено модератором',
+            'manual_rejected': '❌ Отклонено модератором'
+        }
+        
+        status_text = status_badges.get(status, '❓ Неизвестно')
+        
+        text += f"{idx}. {date}\n"
+        text += f"   {status_text}\n"
+        
+        # Добавляем AI info если есть
+        if confidence > 0:
+            provider_emoji = {
+                'gemini': '🤖',
+                'openai-gpt4v': '🤖',
+                'fallback': '⚠️',
+                'error': '❌'
+            }
+            emoji = provider_emoji.get(ai_provider, '🤖')
+            text += f"   {emoji} AI: {confidence*100:.0f}%"
+            if ai_provider != 'unknown':
+                text += f" ({ai_provider})"
+            text += "\n"
+        
         if xp > 0:
-            text += f"+{xp} XP\n"
-        else:
-            text += "Не пройдено\n"
+            text += f"   ✨ +{xp} XP\n"
+        
+        text += "\n"
     
     # Статистика
     total_checks = len(history)
     successful = sum(1 for e in history if e['xp_earned'] > 0)
+    pending = sum(1 for e in history if e.get('verification_status') == 'pending_review')
     
     text += f"\n📊 <b>Статистика:</b>\n"
     text += f"Всего проверок: {total_checks}\n"
     text += f"Успешных: {successful}\n"
+    if pending > 0:
+        text += f"⏳ На модерации: {pending}\n"
     text += f"Получено XP: {sum(e['xp_earned'] for e in history)}"
     
     await message.answer(text, parse_mode="HTML")

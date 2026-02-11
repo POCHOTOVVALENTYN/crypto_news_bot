@@ -201,6 +201,109 @@ async def process_successful_payment(message: Message):
     try:
         parts = payload.split("_")
         
+        # Проверяем формат: premium_custom_userid_amount_uuid_sessionid
+        if parts[0] == "premium" and parts[1] == "custom":
+            # CUSTOM PRICE PAYMENT
+            user_id_from_payload = int(parts[2])
+            price = int(parts[3])
+            payment_uuid = parts[4]
+            session_id = int(parts[5])
+            
+            # Проверка user_id
+            if user_id_from_payload != user_id:
+                logger.error(f"⚠️ User ID mismatch: {user_id_from_payload} != {user_id}")
+                await message.answer("⚠️ Ошибка обработки платежа. Обратитесь в поддержку.")
+                return
+            
+            # Активируем Premium
+            await db.set_subscription(user_id, days=config.premium_duration_days)
+            
+            # Обновляем запись платежа
+            await db.complete_payment(
+                payment_uuid=payment_uuid,
+                charge_id=payment_info.telegram_payment_charge_id,
+                user_id=user_id,
+                amount=price
+            )
+            
+            # Закрываем relay session
+            from services.relay_manager import relay_manager
+            session = await relay_manager.get_session(session_id)
+            if session:
+                await relay_manager.close_session(session_id, status='completed')
+                
+                # Уведомляем админа
+                admin_id = session.get('current_admin_id')
+                if admin_id:
+                    try:
+                        await bot.send_message(
+                            admin_id,
+                            f"✅ <b>Клиент оплатил!</b>\n\n"
+                            f"User ID: {user_id}\n"
+                            f"Сумма: {price}⭐\n"
+                            f"Premium активирован на {config.premium_duration_days} дней",
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to notify admin {admin_id}: {e}")
+            
+            # Записываем в воронку
+            await db.track_funnel(user_id, 'purchase', metadata={
+                'price': price,
+                'discount_used': True,  # Кастомная цена = скидка
+                'charge_id': payment_info.telegram_payment_charge_id,
+                'uuid': payment_uuid,
+                'session_id': session_id,
+                'custom_price': True
+            })
+            
+            # Логирование платежа
+            payment_logger = logging.getLogger("payments")
+            payment_logger.info(
+                f"PAYMENT_SUCCESS | user_id={user_id} | amount={price} | "
+                f"charge_id={payment_info.telegram_payment_charge_id} | "
+                f"custom_price=True | uuid={payment_uuid} | session={session_id}"
+            )
+            
+            # Геймификация
+            xp_result = await db.log_activity(user_id, 'purchase', metadata={
+                'amount': price,
+                'discount': True,
+                'custom_price': True
+            })
+            
+            # Поздравление
+            congrats_text = (
+                "🎉 <b>Поздравляю! Premium активирован!</b>\n\n"
+                f"Ваша подписка активна на {config.premium_duration_days} дней.\n"
+                f"Теперь вам доступны все премиум-функции.\n\n"
+            )
+            
+            if xp_result.get('level_up'):
+                congrats_text += (
+                    f"🎊 <b>Level UP!</b> Вы достигли {xp_result['new_level']} уровня!\n"
+                    f"✨ +{xp_result['xp_earned']} XP\n\n"
+                )
+            else:
+                congrats_text += f"✨ +{xp_result.get('xp_earned', 100)} XP\n\n"
+            
+            congrats_text += "Используйте меню ниже для навигации. 👇"
+            
+            await message.answer(
+                congrats_text,
+                parse_mode="HTML",
+                reply_markup=get_premium_menu()
+            )
+            
+            logger.info(
+                f"🎉 Premium активирован (custom price): {user_id}, "
+                f"price={price}⭐, session={session_id}, "
+                f"charge_id={payment_info.telegram_payment_charge_id}"
+            )
+            
+            return  # Выходим, обработка завершена
+        
+        # СТАНДАРТНАЯ ОБРАБОТКА (старый формат)
         # Поддержка старого формата (без UUID) и нового (с UUID)
         if len(parts) < 5:
             # Старый формат: premium_30d_userid_price

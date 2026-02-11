@@ -211,14 +211,22 @@ class RelayManager:
             # Сначала заголовок, чтобы понятно от кого
             await bot.send_message(admin_id, header_text, parse_mode="HTML")
             
+            
             # Затем копируем само сообщение (медиа, текст, все что угодно)
+            # Добавляем кнопку "Выставить счёт" для price_negotiation сессий
+            buttons = [[InlineKeyboardButton(text="❌ Завершить чат", callback_data=f"relay_close_{session_id}")]]
+            
+            if session['type'] == 'price_negotiation':
+                buttons.insert(0, [InlineKeyboardButton(
+                    text="💰 Выставить счёт",
+                    callback_data=f"set_custom_price_{session_id}"
+                )])
+            
             await bot.copy_message(
                 chat_id=admin_id,
                 from_chat_id=message.chat.id,
                 message_id=message.message_id,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="❌ Завершить чат", callback_data=f"relay_close_{session_id}")]
-                ])
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
             )
             logger.info(f"📨 Сообщение ({content_info['type']}) от user {user_id} переслано админу {admin_id}")
             

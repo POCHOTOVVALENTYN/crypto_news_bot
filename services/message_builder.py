@@ -203,10 +203,25 @@ class AdvancedMessageFormatter:
 
     @staticmethod
     def clean_text(text: str) -> str:
+        """Очистка текста от HTML тегов, entities и лишних символов"""
+        if not text:
+            return ""
+        
+        import html
+        
+        # 1. Декодируем HTML entities (&nbsp; → пробел, &amp; → &, и т.д.)
+        text = html.unescape(text)
+        
+        # 2. Удаляем HTML теги
         text = re.sub(r'<[^>]+>', '', text)
+        
+        # 3. Удаляем артефакты вроде [...], "Читать далее"
         text = text.replace('[…]', '').replace('...', '')
         text = re.sub(r'Читать далее.*', '', text, flags=re.IGNORECASE)
+        
+        # 4. Удаляем множественные пробелы
         text = re.sub(r'\s+', ' ', text).strip()
+        
         return text
     
     

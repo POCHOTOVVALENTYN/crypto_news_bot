@@ -461,3 +461,201 @@ async def manual_weekly_digest(callback: CallbackQuery):
         await callback.message.answer("✅ Недельный дайджест отправлен в канал!")
     except Exception as e:
         await callback.message.answer(f"❌ Ошибка: {e}")
+
+
+# === МОДЕРАЦИЯ BREAKING NEWS ===
+
+@router.callback_query(F.data.startswith("breaking_approve:"))
+async def callback_breaking_approve(callback: CallbackQuery):
+    """Обработка одобрения breaking news"""
+    try:
+        pending_id = int(callback.data.split(":")[1])
+        
+        from services.breaking_news_moderator import breaking_moderator
+        await breaking_moderator.handle_admin_approval(callback, pending_id, "approved")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка callback_breaking_approve: {e}", exc_info=True)
+        await callback.answer("⚠️ Ошибка обработки", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("breaking_reject:"))
+async def callback_breaking_reject(callback: CallbackQuery):
+    """Обработка отклонения breaking news"""
+    try:
+        pending_id = int(callback.data.split(":")[1])
+        
+        from services.breaking_news_moderator import breaking_moderator
+        await breaking_moderator.handle_admin_approval(callback, pending_id, "rejected")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка callback_breaking_reject: {e}", exc_info=True)
+        await callback.answer("⚠️ Ошибка обработки", show_alert=True)
+
+
+
+@router.message(F.text == "📋 Модерация Stories", F.func(lambda m: admin_filter(m.from_user.id)))
+async def show_moderation_queue(message: Message, state: FSMContext):
+    """Показать очередь Stories на модерации"""
+    await state.clear()
+    
+    pending = await db.get_pending_story_reviews(limit=20)
+    
+    if not pending:
+        await message.answer(
+            "✅ <b>Очередь модерации пуста</b>\n\n"
+            "Все Stories проверены!",
+            parse_mode="HTML"
+        )
+        return
+    
+    await message.answer(
+        f"📋 <b>Stories на модерации: {len(pending)}</b>\n\n"
+        "Просматривайте по одной:",
+        parse_mode="HTML"
+    )
+    
+    # Показываем первую
+    await show_story_for_review(message, pending[0])
+
+
+async def show_story_for_review(message: Message, story: dict):
+    """Показать одну Stories для проверки"""
+    import os
+    from aiogram.types import FSInputFile
+    
+    user_name = story['full_name'] or story['username'] or f"ID {story['user_id']}"
+    confidence = story['ai_confidence'] or 0.0
+    created = story['created_at']
+    
+    text = (
+        f"👤 <b>Пользователь:</b> {user_name}\n"
+        f"📅 <b>Дата:</b> {created}\n"
+        f"🤖 <b>AI Confidence:</b> {confidence*100:.0f}%\n\n"
+        "Проверьте скриншот ниже:"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_story_{story['id']}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_story_{story['id']}")
+        ],
+        [InlineKeyboardButton(text="⏭ Следующая", callback_data="next_story")]
+    ])
+    
+    # Отправляем фото
+    if story['local_file_path'] and os.path.exists(story['local_file_path']):
+        await message.answer_photo(
+            photo=FSInputFile(story['local_file_path']),
+            caption=text,
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer(
+            text + "\n\n⚠️ Изображение недоступно",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+
+@router.callback_query(F.data.startswith("approve_story_"))
+async def approve_story_callback(callback: CallbackQuery):
+    """Одобрить Stories"""
+    activity_id = int(callback.data.split("_")[2])
+    admin_id = callback.from_user.id
+    
+    # Получаем user_id до одобрения
+    import aiosqlite
+    async with aiosqlite.connect(db.db_path) as conn:
+        async with conn.execute(
+            "SELECT user_id FROM user_activities WHERE id = ?", (activity_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                await callback.answer("❌ Ошибка: запись не найдена", show_alert=True)
+                return
+            user_id = row[0]
+    
+    success = await db.approve_story_check(activity_id, admin_id)
+    
+    if success:
+        # Уведомляем пользователя
+        try:
+            await bot.send_message(
+                user_id,
+                "✅ <b>Ваша Stories проверена!</b>\n\n"
+                "Модератор одобрил ваш скриншот.\n"
+                "✨ +100 XP начислено!",
+                parse_mode="HTML"
+            )
+        except:
+            pass
+        
+        await callback.message.edit_caption(
+            caption=callback.message.caption + "\n\n✅ <b>ОДОБРЕНО</b>",
+            parse_mode="HTML"
+        )
+        await callback.answer("✅ Одобрено и XP начислено!")
+    else:
+        await callback.answer("❌ Ошибка одобрения", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("reject_story_"))
+async def reject_story_callback(callback: CallbackQuery):
+    """Отклонить Stories"""
+    activity_id = int(callback.data.split("_")[2])
+    admin_id = callback.from_user.id
+    
+    # Получаем user_id
+    import aiosqlite
+    async with aiosqlite.connect(db.db_path) as conn:
+        async with conn.execute(
+            "SELECT user_id FROM user_activities WHERE id = ?", (activity_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                await callback.answer("❌ Ошибка: запись не найдена", show_alert=True)
+                return
+            user_id = row[0]
+    
+    success = await db.reject_story_check(activity_id, admin_id, "Модератор не нашел отметку")
+    
+    if success:
+        # Уведомляем пользователя
+        try:
+            await bot.send_message(
+                user_id,
+                "❌ <b>Проверка не пройдена</b>\n\n"
+                "К сожалению, модератор не нашел отметку @blexler_invest на вашем скриншоте.\n\n"
+                "Попробуйте еще раз с более четким скриншотом!",
+                parse_mode="HTML"
+            )
+        except:
+            pass
+        
+        await callback.message.edit_caption(
+            caption=callback.message.caption + "\n\n❌ <b>ОТКЛОНЕНО</b>",
+            parse_mode="HTML"
+        )
+        await callback.answer("❌ Отклонено")
+    else:
+        await callback.answer("❌ Ошибка отклонения", show_alert=True)
+
+
+@router.callback_query(F.data == "next_story")
+async def next_story_callback(callback: CallbackQuery):
+    """Показать следующую Stories"""
+    pending = await db.get_pending_story_reviews(limit=20)
+    
+    if not pending:
+        await callback.message.edit_caption(
+            caption="✅ <b>Очередь пуста!</b>\n\nВсе Stories проверены.",
+            parse_mode="HTML"
+        )
+        await callback.answer("✅ Все проверено!")
+        return
+    
+    await callback.message.delete()
+    await show_story_for_review(callback.message, pending[0])
+    await callback.answer()

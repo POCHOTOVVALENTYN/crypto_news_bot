@@ -162,14 +162,24 @@ class TelegramListener:
                         return
 
                     logger.info(f"💎 ИНСАЙД: {title}")
+                    
+                    # Подготовка metadata для встраивания ссылок
+                    import json
+                    metadata = json.dumps({
+                        "is_telegram_source": True,
+                        "telegram_channel": source_title,
+                        "telegram_link": f"https://t.me/{event.chat.username}" if event.chat.username else msg_unique_id
+                    })
+                    
                     await db.add_news(
                         url=msg_unique_id,
                         title=title,
                         summary=processed.get('summary', raw_text[:500]),
-                        source=f"⚡ Insider ({source_title})",
+                        source="⚡ Insider",  # Убрали название канала из source
                         published_at="Just now",
                         image_url=None,
-                        priority=10  # Максимальный приоритет для Insider новостей
+                        priority=10,  # Максимальный приоритет для Insider новостей
+                        metadata=metadata  # Добавили metadata
                     )
 
             except Exception as e:

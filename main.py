@@ -210,12 +210,35 @@ async def main():
             id="rss_parsing",
             name="RSS Parsing"
         )
+        
+        # ✅ НОВОЕ: 3-часовой дайджест (вместо постоянного постинга)
+        from services.digest_builder import digest_builder
         scheduler.add_job(
-            check_queue_and_post,
-            IntervalTrigger(seconds=60),
-            id="queue_poster",
-            name="Queue Poster"
+            digest_builder.build_and_publish_digest,
+            IntervalTrigger(hours=3),
+            id="digest_3hour",
+            name="3-Hour Digest"
         )
+        logger.info("✅ 3-часовой дайджест настроен")
+        
+        # ✅ НОВОЕ: Мониторинг breaking news (каждые 30 секунд)
+        from services.breaking_news_moderator import breaking_moderator
+        scheduler.add_job(
+            breaking_moderator.detect_and_notify_admins,
+            IntervalTrigger(seconds=30),
+            id="breaking_news_monitor",
+            name="Breaking News Monitor"
+        )
+        logger.info("✅ Мониторинг breaking news настроен")
+        
+        # ✅ НОВОЕ: Автопубликация истекших breaking news (каждую минуту)
+        scheduler.add_job(
+            breaking_moderator.auto_publish_expired,
+            IntervalTrigger(minutes=1),
+            id="breaking_news_autopublish",
+            name="Breaking News Auto-publish"
+        )
+        logger.info("✅ Автопубликация breaking news настроена")
         scheduler.add_job(
             monitor_health,
             IntervalTrigger(minutes=10),

@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/Users/valentin/Projects/crypto_news_bot/main.py", line 11, in <module>
+    from aiogram import Router
+ModuleNotFoundError: No module named 'aiogram'

@@ -264,6 +264,39 @@ async def handle_support_message(message: Message, state: FSMContext):
     )
 
 
+# === PRICE NEGOTIATION RELAY ===
+
+@router.message(F.text == "💬 Обсудить с менеджером")
+async def start_price_negotiation_relay(message: Message, state: FSMContext):
+    """Начать обсуждение цены с менеджером через relay"""
+    # Этот handler уже существует в premium_purchase.py
+    # Просто импортируем его
+    pass
+
+
+from utils.states import PriceNegotiationState
+
+@router.message(PriceNegotiationState.discussing_with_admin, ~F.from_user.id.in_(ADMIN_IDS), F.content_type.in_({'text', 'photo', 'voice', 'video', 'document', 'audio', 'sticker'}))
+async def handle_price_negotiation_message(message: Message, state: FSMContext):
+    """Обработка сообщений клиента во время переговоров о цене"""
+    data = await state.get_data()
+    session_id = data.get('session_id')
+    
+    if not session_id:
+        await state.clear()
+        return
+    
+    # Пересылаем сообщение админу через Relay
+    await relay_manager.relay_to_admin(session_id, message)
+    
+    # Уведомляем пользователя
+    await message.answer(
+        "✅ Сообщение отправлено менеджеру.\n"
+        "Ожидайте ответа...",
+        parse_mode="HTML"
+    )
+
+
 # === ADMIN CALLBACKS ===
 
 @router.callback_query(F.data.startswith("relay_connect_"))
@@ -310,6 +343,7 @@ async def handle_admin_support_message(message: Message, state: FSMContext):
     """
     Обработка ответов админа.
     Поддерживает восстановление сессии, если бот был перезагружен.
+    Работает для SupportState и PriceNegotiationState.
     """
     user_id = message.from_user.id
     
@@ -323,8 +357,13 @@ async def handle_admin_support_message(message: Message, state: FSMContext):
         active_session = await relay_manager.get_admin_active_session(user_id)
         if active_session:
             session_id = active_session['id']
-            # Восстанавливаем состояние
-            await state.set_state(SupportState.active_session)
+            session_type = active_session['type']
+            
+            # Восстанавливаем состояние в зависимости от типа сессии
+            if session_type == 'price_negotiation':
+                await state.set_state(PriceNegotiationState.discussing_with_admin)
+            else:
+                await state.set_state(SupportState.active_session)
             await state.update_data(session_id=session_id)
             logger.info(f"🔄 Сессия {session_id} восстановлена для админа {user_id}")
         else:
@@ -447,7 +486,133 @@ async def admin_close_session(callback: CallbackQuery):
         [InlineKeyboardButton(text="✅ Сессия закрыта", callback_data="noop")]
     ]))
     
-    logger.info(f"✅ Сессия {session_id} закрыта админом {callback.from_user.id}")
+    logger.info(f"✅ Сессия {session_id} закрыта админом {admin_id} (статус: {status})")
+
+
+# === CUSTOM PRICE INVOICE ===
+
+@router.callback_query(F.data.startswith("set_custom_price_"))
+async def admin_initiate_custom_price(callback: CallbackQuery, state: FSMContext):
+    """Админ нажал кнопку 'Выставить счёт' - запрашиваем сумму"""
+    session_id = int(callback.data.split("_")[3])
+    admin_id = callback.from_user.id
+    
+    # Получаем сессию
+    session = await relay_manager.get_session(session_id)
+    if not session:
+        await callback.answer("Сессия не найдена", show_alert=True)
+        return
+    
+    if session['status'] != 'active':
+        await callback.answer("Сессия уже закрыта", show_alert=True)
+        return
+    
+    user_id = session['user_id']
+    
+    # Устанавливаем состояние для ввода цены
+    await state.set_state(PriceNegotiationState.admin_entering_price)
+    await state.update_data(session_id=session_id, target_user_id=user_id)
+    
+    await callback.answer()
+    await callback.message.answer(
+        "💰 <b>Выставление счёта</b>\n\n"
+        "Введите сумму в Telegram Stars (⭐):\n"
+        "Например: 600\n\n"
+        "Минимум: 100⭐\n"
+        "Максимум: 1000⭐",
+        parse_mode="HTML"
+    )
+    
+    logger.info(f"💰 Админ {admin_id} начал выставление счёта для сессии {session_id}")
+
+
+@router.message(PriceNegotiationState.admin_entering_price, F.text.regexp(r'^\d+$'))
+async def admin_enter_custom_price(message: Message, state: FSMContext):
+    """Админ ввёл сумму - создаём invoice"""
+    admin_id = message.from_user.id
+    amount = int(message.text)
+    
+    # Валидация
+    MIN_PRICE = 100
+    MAX_PRICE = 1000
+    
+    if amount < MIN_PRICE or amount > MAX_PRICE:
+        await message.answer(
+            f"⚠️ Сумма должна быть от {MIN_PRICE} до {MAX_PRICE}⭐\n"
+            f"Попробуйте ещё раз."
+        )
+        return
+    
+    # Получаем данные из FSM
+    data = await state.get_data()
+    session_id = data.get('session_id')
+    user_id = data.get('target_user_id')
+    
+    if not session_id or not user_id:
+        await message.answer("⚠️ Ошибка: данные сессии потеряны")
+        await state.clear()
+        return
+    
+    # Сохраняем кастомную цену в БД
+    await db.save_custom_price(session_id, user_id, amount)
+    
+    # Создаём и отправляем invoice
+    try:
+        await send_custom_price_invoice(user_id, amount, session_id)
+        
+        # Уведомляем админа
+        await message.answer(
+            f"✅ Счёт на {amount}⭐ отправлен клиенту!\n\n"
+            f"Ожидаем оплату...",
+            parse_mode="HTML"
+        )
+        
+        # Возвращаем админа в состояние активной сессии
+        await state.set_state(PriceNegotiationState.discussing_with_admin)
+        await state.update_data(session_id=session_id)
+        
+        logger.info(f"💰 Счёт на {amount}⭐ отправлен user {user_id} (session {session_id})")
+        
+    except Exception as e:
+        logger.error(f"Ошибка отправки invoice: {e}", exc_info=True)
+        await message.answer(
+            "⚠️ Ошибка создания счёта. Попробуйте позже."
+        )
+        await state.clear()
+
+
+async def send_custom_price_invoice(user_id: int, amount: int, session_id: int):
+    """Отправить invoice на кастомную сумму"""
+    from config import config
+    
+    # Создаём payment record
+    payment_uuid = await db.create_payment_record(
+        user_id=user_id,
+        amount=amount,
+        discount_used=True  # Кастомная цена = скидка
+    )
+    
+    # Отправляем invoice
+    await bot.send_invoice(
+        chat_id=user_id,
+        title="Premium подписка (индивидуальные условия)",
+        description=f"Premium-доступ на {config.premium_duration_days} дней к эксклюзивным материалам",
+        payload=f"premium_custom_{user_id}_{amount}_{payment_uuid}_{session_id}",
+        provider_token="",  # Пустая строка для Telegram Stars
+        currency="XTR",  # XTR = Telegram Stars
+        prices=[LabeledPrice(
+            label=f"Premium ({config.premium_duration_days} дней)",
+            amount=amount
+        )]
+    )
+    
+    logger.info(
+        f"💰 Custom invoice sent: user={user_id}, "
+        f"amount={amount}, session={session_id}, uuid={payment_uuid}"
+    )
+
+
+
 
 
 @router.callback_query(F.data.startswith("relay_forward_"))

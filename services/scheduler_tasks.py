@@ -103,7 +103,14 @@ async def scheduled_parsing():
 
 @safe_task("Queue Poster", timeout_seconds=300)
 async def check_queue_and_post():
-    """Проверка очереди и публикация (защищено декоратором)"""
+    """
+    ⚠️ УСТАРЕВШАЯ ФУНКЦИЯ - НЕ ИСПОЛЬЗУЕТСЯ
+    Заменена на систему 3-часовых дайджестов и модерацию breaking news.
+    Оставлено для обратной совместимости.
+    """
+    # ⚠️ ФУНКЦИЯ ОТКЛЮЧЕНА - используется новая система дайджестов
+    return
+    
     # 1. Горячие новости (приоритет >= 6)
     hot_news = await db.get_hot_news(min_priority=6)
     is_hot = False

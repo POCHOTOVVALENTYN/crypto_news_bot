@@ -34,4 +34,5 @@ class PriceNegotiationState(StatesGroup):
     requesting_custom_price = State()  # Запрос индивидуальной цены
     discussing_with_admin = State()  # Обсуждение цены (Relay Mode)
     admin_setting_price = State()  # Админ устанавливает цену
+    admin_entering_price = State()  # Админ вводит сумму (новое)
     awaiting_custom_payment = State()  # Ожидание оплаты кастомной суммы
