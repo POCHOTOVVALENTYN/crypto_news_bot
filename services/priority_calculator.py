@@ -31,6 +31,21 @@ class PriorityCalculator:
         'institutional': 7, 'институционалы': 7,
         'fidelity': 7, 'vanguard': 7,
         
+        # Макроэкономика (НОВОЕ)
+        'cpi': 8, 'inflation': 8, 'инфляция': 8,
+        'fed rate': 9, 'powell speech': 8, 'fomc': 9, 'key rate': 8,
+        'rate hike': 8, 'rate cut': 9, 'ставка фрс': 9,
+        
+        # Технический анализ и рыночные движения (НОВОЕ)
+        'ath': 7, 'all time high': 8, 'historical maximum': 8,
+        'breakout': 6, 'support level': 5, 'resistance level': 5,
+        'golden cross': 6, 'death cross': 6,
+        
+        # Тренды и технологии (НОВОЕ)
+        'ai token': 7, 'depin': 7, 'rwa': 7, 'memecoin': 5,
+        'layer2': 6, 'zk-rollup': 6, 'airdrop': 7, 'snapshot': 6,
+        'mainnet launch': 8, 'testnet': 5,
+        
         # Персоны
         'elon musk': 8, 'маск': 8, 'elon': 7,
         'michael saylor': 7, 'сайлор': 7,

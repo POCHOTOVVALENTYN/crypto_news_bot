@@ -8,17 +8,97 @@
 import logging
 from datetime import datetime
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 from aiogram.fsm.context import FSMContext
 
 from database import db
 from loader import bot
-from config import CONSULTATION_PRICES, ADMIN_NAMES, ADMIN_IDS
+from config import CONSULTATION_PRICES, ADMIN_NAMES, ADMIN_IDS, config
 from services.relay_manager import relay_manager
-from utils.states import SupportState, ConsultationState
+from utils.states import SupportState, ConsultationState, PriceNegotiationState
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+
+# === КОНФИГУРАЦИЯ КОНСУЛЬТАЦИЙ ===
+
+CONSULTATION_CONFIG = {
+    'wallet_review': {
+        'title': "💰 <b>РАЗБОР ВАШЕГО КОШЕЛЬКА</b>",
+        'description': (
+            "🔍 <b>Что входит:</b>\n"
+            "• Детальный анализ вашего портфеля\n"
+            "• Оценка рисков и потенциала каждой монеты\n"
+            "• Анализ вашей торговой стратегии\n"
+            "• Рекомендации по ребалансировке\n"
+            "• Перспективы роста портфеля\n"
+            "• Персональный план действий\n\n"
+            "👨‍🏫 <b>Кто проводит:</b> BLEXLER лично\n"
+            "⏱️ <b>Продолжительность:</b> 1-1.5 часа онлайн"
+        ),
+        'footer': "Получите экспертный взгляд на ваши инвестиции!",
+        'price_key': 'wallet_review',
+        'short_code': 'wallet'
+    },
+    'vip_consultation': {
+        'title': "💎 <b>VIP-КОНСУЛЬТАЦИЯ</b>",
+        'description': (
+            "🎯 <b>Индивидуальная работа с BLEXLER:</b>\n"
+            "• Персональная стратегия торговли\n"
+            "• Психология трейдинга\n"
+            "• Разбор ваших ошибок\n"
+            "• Построение торгового плана\n"
+            "• Управление рисками\n"
+            "• Доступ к приватным инсайтам\n\n"
+            "👨‍🏫 <b>Формат:</b> Онлайн-встреча 1-на-1\n"
+            "⏱️ <b>Продолжительность:</b> 2-3 часа"
+        ),
+        'footer': "Трансформация вашего подхода к крипто!",
+        'price_key': 'vip_consultation',
+        'short_code': 'vip'
+    }
+}
+
+
+# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
+
+async def send_consultation_offer(message: Message, consultation_type: str):
+    """
+    Универсальная функция отправки оффера консультации.
+    Использует Stateless Callbacks (цена вшита в кнопку).
+    """
+    config_data = CONSULTATION_CONFIG.get(consultation_type)
+    if not config_data:
+        logger.error(f"Unknown consultation type: {consultation_type}")
+        return
+
+    price_info = CONSULTATION_PRICES.get(config_data['price_key'])
+    if not price_info:
+        logger.error(f"Price info not found for: {config_data['price_key']}")
+        return
+
+    # Формируем текст
+    text = (
+        f"{config_data['title']}\n\n"
+        f"{config_data['description']}\n"
+        f"💰 <b>Стоимость:</b> {price_info['usd']}$ ({price_info['stars']:,}⭐)\n\n"
+        f"{config_data['footer']}"
+    )
+
+    # Формируем callback data с ценой и типом (Stateless)
+    # pay_consult:{short_code}:{stars}
+    callback_data = f"pay_consult:{config_data['short_code']}:{price_info['stars']}"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f"💳 Оплатить {price_info['usd']}$ ({price_info['stars']:,}⭐)",
+            callback_data=callback_data
+        )],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_consultation")]
+    ])
+
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 # === PREMIUM-ПОДДЕРЖКА ===
@@ -70,76 +150,45 @@ async def premium_support(message: Message, state: FSMContext):
     logger.info(f"🆘 Premium-поддержка запущена для user {user_id}, session {session_id}")
 
 
-# === РАЗБОР КОШЕЛЬКА ===
+# === КОНСУЛЬТАЦИИ (HANDLERS) ===
 
 @router.message(F.text == "💰 Разбор Кошелька")
-async def wallet_review_offer(message: Message, state: FSMContext):
-    """Предложение услуги Разбор кошелька - доступно всем"""
-    user_id = message.from_user.id
-    
-    price_info = CONSULTATION_PRICES['wallet_review']
-    
-    await message.answer(
-        "💰 <b>РАЗБОР ВАШЕГО КОШЕЛЬКА</b>\n\n"
-        "🔍 <b>Что входит:</b>\n"
-        "• Детальный анализ вашего портфеля\n"
-        "• Оценка рисков и потенциала каждой монеты\n"
-        "• Анализ вашей торговой стратегии\n"
-        "• Рекомендации по ребалансировке\n"
-        "• Перспективы роста портфеля\n"
-        "• Персональный план действий\n\n"
-        "👨‍🏫 <b>Кто проводит:</b> BLEXLER лично\n"
-        "⏱️ <b>Продолжительность:</b> 1-1.5 часа онлайн\n"
-        f"💰 <b>Стоимость:</b> {price_info['usd']}$ ({price_info['stars']:,}⭐)\n\n"
-        "Получите экспертный взгляд на ваши инвестиции!",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"💳 Оплатить {price_info['usd']}$ ({price_info['stars']:,}⭐)",
-                callback_data=f"pay_consultation_wallet_{price_info['stars']}"
-            )],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_consultation")]
-        ])
-    )
-    
-    await state.set_state(ConsultationState.viewing_offer)
-    await state.update_data(consultation_type='wallet_review')
+async def wallet_review_offer(message: Message):
+    """Предложение услуги Разбор кошелька"""
+    await send_consultation_offer(message, 'wallet_review')
 
-
-# === VIP-КОНСУЛЬТАЦИЯ ===
 
 @router.message(F.text == "💎 VIP-консультация")
-async def vip_consultation_offer(message: Message, state: FSMContext):
-    """Предложение VIP-консультации - доступно всем"""
-    user_id = message.from_user.id
-    
-    price_info = CONSULTATION_PRICES['vip_consultation']
-    
+async def vip_consultation_offer(message: Message):
+    """Предложение VIP-консультации"""
+    await send_consultation_offer(message, 'vip_consultation')
+
+
+@router.message(F.text == "💼 Консультация") # Обратная совместимость для старых кнопок меню
+async def legacy_consultation_handler(message: Message):
+    """Перенаправление старой кнопки на новые услуги"""
+    # Предлагаем выбор или показываем VIP (как наиболее близкое)
     await message.answer(
-        "💎 <b>VIP-КОНСУЛЬТАЦИЯ</b>\n\n"
-        "🎯 <b>Индивидуальная работа с BLEXLER:</b>\n"
-        "• Персональная стратегия торговли\n"
-        "• Психология трейдинга\n"
-        "• Разбор ваших ошибок\n"
-        "• Построение торгового плана\n"
-        "• Управление рисками\n"
-        "• Доступ к приватным инсайтам\n\n"
-        "👨‍🏫 <b>Формат:</b> Онлайн-встреча 1-на-1\n"
-        "⏱️ <b>Продолжительность:</b> 2-3 часа\n"
-        f"💰 <b>Стоимость:</b> {price_info['usd']}$ ({price_info['stars']:,}⭐)\n\n"
-        "Трансформация вашего подхода к крипто!",
+        "💼 <b>Выберите тип консультации:</b>\n\n"
+        "💰 <b>Разбор Кошелька</b> - анализ портфеля\n"
+        "💎 <b>VIP-консультация</b> - персональная стратегия",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"💳 Оплатить {price_info['usd']}$ ({price_info['stars']:,}⭐)",
-                callback_data=f"pay_consultation_vip_{price_info['stars']}"
-            )],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_consultation")]
+            [InlineKeyboardButton(text="💰 Разбор Кошелька", callback_data="show_offer_wallet")],
+            [InlineKeyboardButton(text="💎 VIP-консультация", callback_data="show_offer_vip")]
         ])
     )
-    
-    await state.set_state(ConsultationState.viewing_offer)
-    await state.update_data(consultation_type='vip_consultation')
+
+# Обработка кнопок выбора из legacy хендлера
+@router.callback_query(F.data == "show_offer_wallet")
+async def show_offer_wallet_cb(callback: CallbackQuery):
+    await send_consultation_offer(callback.message, 'wallet_review')
+    await callback.answer()
+
+@router.callback_query(F.data == "show_offer_vip")
+async def show_offer_vip_cb(callback: CallbackQuery):
+    await send_consultation_offer(callback.message, 'vip_consultation')
+    await callback.answer()
 
 
 # === PREMIUM-СИГНАЛЫ ===
@@ -176,61 +225,67 @@ async def premium_signals(message: Message):
     )
 
 
-# === INLINE CALLBACKS ===
+# === ОБРАБОТКА ОПЛАТЫ (STATELESS) ===
 
+@router.callback_query(F.data.startswith("pay_consult:"))
+async def process_stateless_payment(callback: CallbackQuery):
+    """
+    Обработка оплаты консультации (Stateless версия).
+    Format: pay_consult:{short_code}:{stars}
+    """
+    try:
+        parts = callback.data.split(":")
+        short_code = parts[1]
+        amount_stars = int(parts[2])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка данных кнопки", show_alert=True)
+        return
 
-@router.callback_query(F.data.startswith("pay_consultation_"))
-async def process_consultation_payment(callback: CallbackQuery, state: FSMContext):
-    """Обработка оплаты консультации через Telegram Stars"""
     user_id = callback.from_user.id
     
-    # Получаем данные из FSM
-    data = await state.get_data()
-    consultation_type = data.get('consultation_type')
-    
-    if not consultation_type:
-        await callback.answer("Ошибка: тип консультации не определён", show_alert=True)
+    # Определяем полные данные по short_code
+    consultation_type = None
+    usd_price = 0
+    title = "Консультация"
+
+    if short_code == 'wallet':
+        consultation_type = 'wallet_review'
+        title = "💰 Разбор Кошелька"
+    elif short_code == 'vip':
+        consultation_type = 'vip_consultation'
+        title = "💎 VIP-консультация"
+    else:
+        await callback.answer("❌ Неизвестный тип услуги", show_alert=True)
         return
-    
+
+    # Получаем актуальную цену USD (для логов/статистики)
+    # Можно взять из CONSULTATION_PRICES по ключу
     price_info = CONSULTATION_PRICES.get(consultation_type)
-    if not price_info:
-        await callback.answer("Ошибка: цена не найдена", show_alert=True)
-        return
-    
+    if price_info:
+        usd_price = price_info['usd']
+        # Можно сверить stars, но доверяем кнопке, если она была сгенерирована нами
+
     try:
-        # Telegram Stars Payment API
-        # Payload ДОЛЖЕН быть коротким! Максимум 128 байт
-        # Формат: "wallet_300" или "vip_350" (для обратной совместимости с парсером)
-        short_type = 'wallet' if consultation_type == 'wallet_review' else 'vip'
-        payload = f"{short_type}_{price_info['usd']}"
-        
-        # Создаём invoice
-        from aiogram.types import LabeledPrice
+        # Payload для invoices: type_usdAmount (для совместимости)
+        # Или можно использовать json.
+        # Старый формат был: "wallet_300"
+        payload = f"{short_code}_{usd_price}"
         
         await bot.send_invoice(
             chat_id=user_id,
-            title=price_info['name'],
-            description=f"Стоимость: {price_info['usd']}$ ({price_info['stars']:,}⭐)",
+            title=title,
+            description=f"Стоимость: {usd_price}$ ({amount_stars:,}⭐)",
             payload=payload,
             provider_token="",
             currency="XTR",
-            prices=[LabeledPrice(label="XTR", amount=price_info['stars'])]
+            prices=[LabeledPrice(label="XTR", amount=amount_stars)]
         )
         
         await callback.answer("💳 Счёт на оплату отправлен!")
         
-        # Сохраняем в FSM для обработки после оплаты
-        await state.update_data(
-            pending_consultation=consultation_type,
-            amount_usd=price_info['usd'],
-            amount_stars=price_info['stars']
-        )
-        
     except Exception as e:
-        logger.error(f"❌ Ошибка создания invoice: {e}")
+        logger.error(f"❌ Ошибка создания invoice (stateless): {e}")
         await callback.answer("Ошибка создания счёта. Попробуйте позже.", show_alert=True)
-    
-    await callback.answer()
 
 
 @router.callback_query(F.data == "cancel_consultation")
@@ -269,12 +324,8 @@ async def handle_support_message(message: Message, state: FSMContext):
 @router.message(F.text == "💬 Обсудить с менеджером")
 async def start_price_negotiation_relay(message: Message, state: FSMContext):
     """Начать обсуждение цены с менеджером через relay"""
-    # Этот handler уже существует в premium_purchase.py
-    # Просто импортируем его
     pass
 
-
-from utils.states import PriceNegotiationState
 
 @router.message(PriceNegotiationState.discussing_with_admin, ~F.from_user.id.in_(ADMIN_IDS), F.content_type.in_({'text', 'photo', 'voice', 'video', 'document', 'audio', 'sticker'}))
 async def handle_price_negotiation_message(message: Message, state: FSMContext):
@@ -338,50 +389,6 @@ async def admin_connect_to_session(callback: CallbackQuery, state: FSMContext):
     logger.info(f"✅ Админ {admin_id} подключился к сессии {session_id}")
 
 
-@router.message(F.from_user.id.in_(ADMIN_IDS), lambda m: not (m.text and m.text.startswith("/")))
-async def handle_admin_support_message(message: Message, state: FSMContext):
-    """
-    Обработка ответов админа.
-    Поддерживает восстановление сессии, если бот был перезагружен.
-    Работает для SupportState и PriceNegotiationState.
-    """
-    user_id = message.from_user.id
-    
-    # 1. Проверяем текущее состояние FSM
-    current_state = await state.get_state()
-    data = await state.get_data()
-    session_id = data.get('session_id')
-    
-    # 2. Если состояния нет, проверяем БД (восстановление после рестарта)
-    if not session_id:
-        active_session = await relay_manager.get_admin_active_session(user_id)
-        if active_session:
-            session_id = active_session['id']
-            session_type = active_session['type']
-            
-            # Восстанавливаем состояние в зависимости от типа сессии
-            if session_type == 'price_negotiation':
-                await state.set_state(PriceNegotiationState.discussing_with_admin)
-            else:
-                await state.set_state(SupportState.active_session)
-            await state.update_data(session_id=session_id)
-            logger.info(f"🔄 Сессия {session_id} восстановлена для админа {user_id}")
-        else:
-            # Если ни в FSM, ни в БД нет сессии - игнорируем (пусть обрабатывают другие хендлеры)
-            # Но так как мы уже здесь, другие хендлеры не сработают.
-            # Поэтому, если это просто текст и нет сессии - можно ничего не делать или ответить.
-            # Для админов лучше молчать, чтобы не спамить.
-            return
-            
-    # Пересылаем ответ пользователю
-    await relay_manager.relay_to_user(session_id, message)
-    
-    # Реакция для подтверждения
-    try:
-        await message.react([type('ReactionTypeEmoji', (object,), {'emoji': '👌'})])
-    except:
-        pass
-
 
 @router.callback_query(F.data.startswith("user_close_"))
 async def user_close_session(callback: CallbackQuery, state: FSMContext):
@@ -401,15 +408,8 @@ async def user_close_session(callback: CallbackQuery, state: FSMContext):
 
     if session.get('status') != 'active':
         await callback.answer("Диалог уже завершен", show_alert=True)
-        try:
-            await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Уже завершено", callback_data="noop")]
-            ]))
-        except:
-            pass
         return
     
-    # Проверка прав (на всякий случай)
     if session['user_id'] != user_id:
         await callback.answer("Это не ваша сессия", show_alert=True)
         return
@@ -428,7 +428,6 @@ async def user_close_session(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Диалог завершен", callback_data="noop")]
         ]))
-        # Отправляем отдельное сообщение, чтобы было понятно
         await callback.message.answer("✅ Диалог завершен. Спасибо за обращение!", parse_mode="HTML")
     except Exception:
         pass
@@ -459,12 +458,6 @@ async def admin_close_session(callback: CallbackQuery):
     
     if session.get('status') != 'active':
         await callback.answer("Сессия уже закрыта", show_alert=True)
-        try:
-            await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Уже закрыто", callback_data="noop")]
-            ]))
-        except:
-            pass
         return
     
     user_id = session['user_id']
@@ -485,8 +478,6 @@ async def admin_close_session(callback: CallbackQuery):
     await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Сессия закрыта", callback_data="noop")]
     ]))
-    
-    logger.info(f"✅ Сессия {session_id} закрыта админом {admin_id} (статус: {status})")
 
 
 # === CUSTOM PRICE INVOICE ===
@@ -497,7 +488,6 @@ async def admin_initiate_custom_price(callback: CallbackQuery, state: FSMContext
     session_id = int(callback.data.split("_")[3])
     admin_id = callback.from_user.id
     
-    # Получаем сессию
     session = await relay_manager.get_session(session_id)
     if not session:
         await callback.answer("Сессия не найдена", show_alert=True)
@@ -509,7 +499,6 @@ async def admin_initiate_custom_price(callback: CallbackQuery, state: FSMContext
     
     user_id = session['user_id']
     
-    # Устанавливаем состояние для ввода цены
     await state.set_state(PriceNegotiationState.admin_entering_price)
     await state.update_data(session_id=session_id, target_user_id=user_id)
     
@@ -522,28 +511,20 @@ async def admin_initiate_custom_price(callback: CallbackQuery, state: FSMContext
         "Максимум: 1000⭐",
         parse_mode="HTML"
     )
-    
-    logger.info(f"💰 Админ {admin_id} начал выставление счёта для сессии {session_id}")
 
 
 @router.message(PriceNegotiationState.admin_entering_price, F.text.regexp(r'^\d+$'))
 async def admin_enter_custom_price(message: Message, state: FSMContext):
     """Админ ввёл сумму - создаём invoice"""
-    admin_id = message.from_user.id
     amount = int(message.text)
     
-    # Валидация
     MIN_PRICE = 100
     MAX_PRICE = 1000
     
     if amount < MIN_PRICE or amount > MAX_PRICE:
-        await message.answer(
-            f"⚠️ Сумма должна быть от {MIN_PRICE} до {MAX_PRICE}⭐\n"
-            f"Попробуйте ещё раз."
-        )
+        await message.answer(f"⚠️ Сумма должна быть от {MIN_PRICE} до {MAX_PRICE}⭐")
         return
     
-    # Получаем данные из FSM
     data = await state.get_data()
     session_id = data.get('session_id')
     user_id = data.get('target_user_id')
@@ -553,65 +534,96 @@ async def admin_enter_custom_price(message: Message, state: FSMContext):
         await state.clear()
         return
     
-    # Сохраняем кастомную цену в БД
     await db.save_custom_price(session_id, user_id, amount)
     
-    # Создаём и отправляем invoice
     try:
-        await send_custom_price_invoice(user_id, amount, session_id)
+        await send_custom_price_offer(user_id, amount, session_id)
         
-        # Уведомляем админа
         await message.answer(
-            f"✅ Счёт на {amount}⭐ отправлен клиенту!\n\n"
-            f"Ожидаем оплату...",
+            f"✅ Предложение на {amount}⭐ отправлено клиенту!\n\n"
+            f"Клиент увидит красивую кнопку оплаты.",
             parse_mode="HTML"
         )
         
-        # Возвращаем админа в состояние активной сессии
         await state.set_state(PriceNegotiationState.discussing_with_admin)
         await state.update_data(session_id=session_id)
         
-        logger.info(f"💰 Счёт на {amount}⭐ отправлен user {user_id} (session {session_id})")
-        
     except Exception as e:
-        logger.error(f"Ошибка отправки invoice: {e}", exc_info=True)
-        await message.answer(
-            "⚠️ Ошибка создания счёта. Попробуйте позже."
-        )
+        logger.error(f"Ошибка отправки оффера: {e}", exc_info=True)
+        await message.answer("⚠️ Ошибка отправки предложения.")
         await state.clear()
 
 
-async def send_custom_price_invoice(user_id: int, amount: int, session_id: int):
-    """Отправить invoice на кастомную сумму"""
-    from config import config
+async def send_custom_price_offer(user_id: int, amount: int, session_id: int):
+    """Отправить красивый оффер с кнопкой оплаты"""
+    # Формируем callback data: pay_custom:amount:session_id
+    callback_data = f"pay_custom:{amount}:{session_id}"
     
-    # Создаём payment record
-    payment_uuid = await db.create_payment_record(
-        user_id=user_id,
-        amount=amount,
-        discount_used=True  # Кастомная цена = скидка
-    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"💳 Оплатить {amount} ⭐", callback_data=callback_data)]
+    ])
     
-    # Отправляем invoice
-    await bot.send_invoice(
+    await bot.send_message(
         chat_id=user_id,
-        title="Premium подписка (индивидуальные условия)",
-        description=f"Premium-доступ на {config.premium_duration_days} дней к эксклюзивным материалам",
-        payload=f"premium_custom_{user_id}_{amount}_{payment_uuid}_{session_id}",
-        provider_token="",  # Пустая строка для Telegram Stars
-        currency="XTR",  # XTR = Telegram Stars
-        prices=[LabeledPrice(
-            label=f"Premium ({config.premium_duration_days} дней)",
-            amount=amount
-        )]
+        text=(
+            "💎 <b>Персональное предложение</b>\n\n"
+            "Мы согласовали для вас индивидуальные условия подписки.\n"
+            f"Доступ ко всем функциям Premium на <b>{config.premium_duration_days} дней</b>.\n\n"
+            f"🎯 <b>Специальная цена:</b> {amount} ⭐\n"
+            "<i>(Предложение сформировано менеджером)</i>"
+        ),
+        parse_mode="HTML",
+        reply_markup=keyboard
     )
+
+
+@router.callback_query(F.data.startswith("pay_custom:"))
+async def process_custom_offer_payment(callback: CallbackQuery):
+    """
+    Клиент нажал кнопку оплаты в кастомном оффере.
+    Генерируем и отправляем Invoice.
+    Format: pay_custom:amount:session_id
+    """
+    try:
+        parts = callback.data.split(":")
+        amount = int(parts[1])
+        session_id = int(parts[2])
+    except (IndexError, ValueError):
+        await callback.answer("Ошибка данных кнопки", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
     
-    logger.info(
-        f"💰 Custom invoice sent: user={user_id}, "
-        f"amount={amount}, session={session_id}, uuid={payment_uuid}"
-    )
-
-
+    try:
+        # Создаем запись платежа
+        payment_uuid = await db.create_payment_record(
+            user_id=user_id,
+            amount=amount,
+            discount_used=True
+        )
+        
+        # Формируем payload для invoice
+        # premium_custom_{user_id}_{amount}_{uuid}_{session_id}
+        payload = f"premium_custom_{user_id}_{amount}_{payment_uuid}_{session_id}"
+        
+        await bot.send_invoice(
+            chat_id=user_id,
+            title="Premium подписка (Special)",
+            description=f"Индивидуальный план на {config.premium_duration_days} дней",
+            payload=payload,
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice(
+                label=f"Premium ({config.premium_duration_days} дней)",
+                amount=amount
+            )]
+        )
+        
+        await callback.answer("💳 Счёт сформирован!")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания custom invoice: {e}", exc_info=True)
+        await callback.answer("Ошибка создания счёта", show_alert=True)
 
 
 
@@ -619,22 +631,57 @@ async def send_custom_price_invoice(user_id: int, amount: int, session_id: int):
 async def admin_forward_session(callback: CallbackQuery):
     """Админ переадресует сессию"""
     session_id = int(callback.data.split("_")[2])
-    
-    # Эскалируем сессию
     await relay_manager.escalate_session(session_id)
-    
-    await callback.answer("Сессия переадресована следующему админу")
+    await callback.answer("Сессия переадресована")
     await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➡️ Переадресовано", callback_data="noop")]
     ]))
-    
-    logger.info(f"➡️ Сессия {session_id} переадресована админом {callback.from_user.id}")
 
 
 @router.callback_query(F.data == "noop")
 async def noop_callback(callback: CallbackQuery):
-    """Пустой callback для отработанных кнопок"""
     await callback.answer()
 
 
-logger.info("✅ Premium Services handlers зарегистрированы")
+logger.info("✅ Premium Services handlers зарегистрированы (Refactored)")
+
+
+@router.message(F.from_user.id.in_(ADMIN_IDS), lambda m: not (m.text and m.text.startswith("/")))
+async def handle_admin_support_message(message: Message, state: FSMContext):
+    """
+    Обработка ответов админа.
+    Поддерживает восстановление сессии, если бот был перезагружен.
+    """
+    user_id = message.from_user.id
+    
+    # 1. Проверяем текущее состояние FSM
+    current_state = await state.get_state()
+    data = await state.get_data()
+    session_id = data.get('session_id')
+    
+    # 2. Если состояния нет, проверяем БД (восстановление после рестарта)
+    if not session_id:
+        active_session = await relay_manager.get_admin_active_session(user_id)
+        if active_session:
+            session_id = active_session['id']
+            session_type = active_session['type']
+            
+            # Восстанавливаем состояние в зависимости от типа сессии
+            if session_type == 'price_negotiation':
+                await state.set_state(PriceNegotiationState.discussing_with_admin)
+            else:
+                await state.set_state(SupportState.active_session)
+            await state.update_data(session_id=session_id)
+            logger.info(f"🔄 Сессия {session_id} восстановлена для админа {user_id}")
+        else:
+            return
+            
+    # Пересылаем ответ пользователю
+    await relay_manager.relay_to_user(session_id, message)
+    
+    # Реакция для подтверждения
+    try:
+        await message.react([type('ReactionTypeEmoji', (object,), {'emoji': '👌'})])
+    except:
+        pass
+

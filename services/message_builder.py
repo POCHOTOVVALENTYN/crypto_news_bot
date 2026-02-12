@@ -8,11 +8,15 @@ from functools import lru_cache
 import asyncio
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 
+import os
+from aiogram.types import FSInputFile
+
 logger = logging.getLogger(__name__)
 
 
 # === ASYNC LRU CACHE (Простая реализация) ===
 def async_lru_cache(maxsize=128, ttl=300):
+
     """Декоратор для кэширования асинхронных функций с TTL."""
 
     def decorator(func):
@@ -182,7 +186,13 @@ class ImageExtractor:
     def is_valid_image_url(url: Optional[str]) -> bool:
         if not url:
             return False
-        return url.lower().startswith('http') and not url.endswith('.svg')
+        # Проверка URL
+        if url.lower().startswith('http') and not url.endswith('.svg'):
+            return True
+        # Проверка локального файла
+        if os.path.exists(url) and os.path.isfile(url):
+            return True
+        return False
 
 
 # === ФОРМАТИРОВАНИЕ ===
@@ -203,7 +213,7 @@ class AdvancedMessageFormatter:
 
     @staticmethod
     def clean_text(text: str) -> str:
-        """Очистка текста от HTML тегов, entities и лишних символов"""
+        """Очистка текста от HTML тегов, Markdown ссылок и лишних символов"""
         if not text:
             return ""
         
@@ -212,14 +222,19 @@ class AdvancedMessageFormatter:
         # 1. Декодируем HTML entities (&nbsp; → пробел, &amp; → &, и т.д.)
         text = html.unescape(text)
         
-        # 2. Удаляем HTML теги
+        # 2. Удаляем Markdown ссылки: [text](url) -> text
+        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+        
+        # 3. Удаляем HTML теги
         text = re.sub(r'<[^>]+>', '', text)
         
-        # 3. Удаляем артефакты вроде [...], "Читать далее"
+        # 4. Удаляем артефакты вроде [...], "Читать далее"
         text = text.replace('[…]', '').replace('...', '')
+        # Удаляем оставшиеся квадратные скобки
+        text = text.replace('[', '').replace(']', '')
         text = re.sub(r'Читать далее.*', '', text, flags=re.IGNORECASE)
         
-        # 4. Удаляем множественные пробелы
+        # 5. Удаляем множественные пробелы
         text = re.sub(r'\s+', ' ', text).strip()
         
         return text
@@ -306,7 +321,8 @@ class AdvancedMessageFormatter:
             technical_analysis: Optional[Dict] = None,
             key_points: Optional[List[str]] = None,
             full_content: Optional[str] = None,
-            footer_template: Optional[str] = None
+            footer_template: Optional[str] = None,
+            is_breaking: bool = False
     ) -> Dict:
 
         # Инициализируем переменные для шаблона (на будущее)
@@ -315,13 +331,11 @@ class AdvancedMessageFormatter:
 
         # Заголовок
         # ✅ НОВОЕ: Используем яркие эмодзи (стандартные, но анимированные в Telegram)
-        coin_emoji = "💎" 
-        coin_tag = ""
-
+        # coin_tag убран по требованию пользователя
+        
         if ai_data:
             coin = ai_data.get("coin", "Market")
             if coin and coin != "Market":
-                coin_tag = f"#{coin}"
                 if not image_url:
                     image_url = AdvancedMessageFormatter.get_coin_image(coin)
 
@@ -332,9 +346,14 @@ class AdvancedMessageFormatter:
         title_display = title
         title_with_link = AdvancedMessageFormatter.insert_random_link(title_display, source_url)
         
-        # 🔥 - горячие новости, ⚡️ - обычные
-        header_emoji = "🔥" 
-        header = f"{header_emoji} <b>{title_with_link}</b> {coin_tag}\n\n"
+        # Случайный эмодзи из набора (как в дайджесте)
+        NEWS_EMOJIS = ['🔹', '🔸', '⚡', '✨', '📌', '📍', '💎', '💡', '🔖', '🚩', '🌀', '💠']
+        header_emoji = "🔥" if is_breaking else random.choice(NEWS_EMOJIS)
+        
+        # Добавляем префикс BREAKING если нужно
+        # prefix = "<b>BREAKING:</b> " if is_breaking else ""  # REMOVED request
+        
+        header = f"{header_emoji} <b>{title_with_link}</b>\n\n"
 
         # ✅ НОВОЕ: Контент (полный текст или summary)
         content_section = ""
@@ -443,9 +462,17 @@ class RichMediaMessage:
             sent_message = None
             if self.image_url and ImageExtractor.is_valid_image_url(self.image_url):
                 try:
+                    # Определяем тип изображения: URL или локальный файл
+                    if self.image_url.lower().startswith('http'):
+                        # URL изображение
+                        photo = self.image_url
+                    else:
+                        # Локальный файл
+                        photo = FSInputFile(self.image_url)
+                    
                     sent_message = await bot.send_photo(
                         chat_id=chat_id,
-                        photo=self.image_url,
+                        photo=photo,
                         caption=self.text,
                         parse_mode="HTML",
                         reply_markup=self.reply_markup

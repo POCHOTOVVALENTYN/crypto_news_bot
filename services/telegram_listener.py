@@ -83,6 +83,13 @@ class TelegramListener:
             accessible_entities = []
             for source_id in self.source_channels:
                 try:
+                    # Корректировка для ID каналов (если это строка с числом, преобразуем в int)
+                    # Telethon требует int для ID, но str для юзернеймов
+                    if isinstance(source_id, str):
+                        clean_id = source_id.strip()
+                        if clean_id.lstrip('-').isdigit():
+                            source_id = int(clean_id)
+
                     entity = await self.client.get_entity(source_id)
                     accessible_entities.append(entity)
                     name = getattr(entity, 'title', getattr(entity, 'first_name', 'Unknown'))
@@ -163,6 +170,23 @@ class TelegramListener:
 
                     logger.info(f"💎 ИНСАЙД: {title}")
                     
+                    # Скачивание медиа (если есть)
+                    image_path = None
+                    if event.message.media and not getattr(event.message, 'web_preview', False):
+                        try:
+                            import os
+                            media_dir = "media/temp"
+                            if not os.path.exists(media_dir):
+                                os.makedirs(media_dir)
+                            
+                            # Скачиваем фото
+                            path = await event.message.download_media(file=media_dir)
+                            if path:
+                                image_path = path
+                                logger.info(f"📸 Фото скачано: {path}")
+                        except Exception as e:
+                            logger.error(f"⚠️ Ошибка скачивания фото: {e}")
+
                     # Подготовка metadata для встраивания ссылок
                     import json
                     metadata = json.dumps({
@@ -177,7 +201,7 @@ class TelegramListener:
                         summary=processed.get('summary', raw_text[:500]),
                         source="⚡ Insider",  # Убрали название канала из source
                         published_at="Just now",
-                        image_url=None,
+                        image_url=image_path,  # Передаем локальный путь
                         priority=10,  # Максимальный приоритет для Insider новостей
                         metadata=metadata  # Добавили metadata
                     )

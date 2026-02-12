@@ -76,6 +76,10 @@ class Settings(BaseSettings):
 
     # === ADMIN (Новое - для алертов) ===
     admin_id: Optional[int] = Field(None, description="Admin user ID for alerts")
+    
+    # === DISCUSSION GROUP (Предложка/Комментарии) ===
+    discussion_group_id: int = Field(-1003810680361, description="ID группы для комментариев")
+    disclaimer_url: Optional[str] = Field("https://telegra.ph/Disklejmer-kanala-BLEXLER--INVEST-02-11", description="Ссылка на Telegraph с дисклеймером")
 
     # === AI PROVIDERS (Хотя бы один обязателен) ===
     # Groq - новый провайдер с щедрым free tier (750k токенов/день)

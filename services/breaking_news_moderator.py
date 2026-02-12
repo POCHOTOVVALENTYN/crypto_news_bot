@@ -101,14 +101,16 @@ class BreakingNewsModerator:
         """Отправить уведомление админу"""
         try:
             # Форматируем сообщение
+            # Форматируем сообщение
             message_text = (
-                f"🔥 <b>BREAKING NEWS - ТРЕБУЕТСЯ МОДЕРАЦИЯ</b>\n\n"
-                f"<b>Заголовок:</b> {news_item['title']}\n\n"
-                f"<b>Источник:</b> {news_item['source']}\n"
-                f"<b>Приоритет:</b> {news_item['priority']}/10\n"
-                f"<b>Время:</b> {news_item['added_at']}\n\n"
-                f"<b>Описание:</b>\n{news_item.get('summary', 'Нет описания')[:300]}\n\n"
-                f"⏱️ Автопубликация через {self.AUTO_PUBLISH_TIMEOUT_MINUTES} минут"
+                f"🚨 <b>BREAKING NEWS МОДЕРАЦИЯ</b>\n"
+                f"➖➖➖➖➖➖➖➖➖➖\n"
+                f"📰 <b>{news_item['title']}</b>\n\n"
+                f"⚡️ <b>Приоритет:</b> {news_item['priority']}/10\n"
+                f"🔗 <b>Источник:</b> {news_item['source']}\n"
+                f"⏳ <b>Время:</b> {news_item['added_at']}\n\n"
+                f"📝 <b>Кратко:</b>\n<i>{news_item.get('summary', 'Нет описания')[:300]}...</i>\n\n"
+                f"⚠️ <i>Автопубликация через {self.AUTO_PUBLISH_TIMEOUT_MINUTES} мин</i>"
             )
             
             # Создаем inline кнопки
@@ -207,7 +209,7 @@ class BreakingNewsModerator:
         """Немедленная публикация breaking news"""
         try:
             # Импортируем функцию публикации
-            from services.scheduler_tasks import publish_single_news
+            from services.publish_helper import publish_single_news
             
             # Получаем новость
             async with db.conn.execute(

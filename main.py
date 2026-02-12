@@ -211,15 +211,15 @@ async def main():
             name="RSS Parsing"
         )
         
-        # ✅ НОВОЕ: 3-часовой дайджест (вместо постоянного постинга)
+        # ✅ НОВОЕ: 1-часовой дайджест (вместо постоянного постинга)
         from services.digest_builder import digest_builder
         scheduler.add_job(
             digest_builder.build_and_publish_digest,
-            IntervalTrigger(hours=3),
-            id="digest_3hour",
-            name="3-Hour Digest"
+            IntervalTrigger(hours=1),
+            id="digest_1hour",
+            name="1-Hour Digest"
         )
-        logger.info("✅ 3-часовой дайджест настроен")
+        logger.info("✅ 1-часовой дайджест настроен")
         
         # ✅ НОВОЕ: Мониторинг breaking news (каждые 30 секунд)
         from services.breaking_news_moderator import breaking_moderator

@@ -4,6 +4,8 @@
 """
 import logging
 import json
+import random
+import asyncio
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -14,6 +16,7 @@ from database import db
 from services.ai_summary import NewsAnalyzer
 from services.content_deduplicator import ContentDeduplicator
 from services.message_builder import get_multiple_crypto_prices, FearGreedIndexTracker
+from services.translator import translator
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +24,8 @@ logger = logging.getLogger(__name__)
 class DigestBuilder:
     """Создание периодических дайджестов новостей"""
     
-    # Интервал дайджеста (3 часа по требованию пользователя)
-    DIGEST_INTERVAL_HOURS = 3
+    # Интервал дайджеста (1 час по требованию пользователя)
+    DIGEST_INTERVAL_HOURS = 1
     
     # Минимальное количество новостей для публикации дайджеста
     MIN_NEWS_COUNT = 2
@@ -36,6 +39,9 @@ class DigestBuilder:
         'other': {'emoji': '📌', 'title': 'ДРУГИЕ НОВОСТИ'}
     }
     
+    # Эмодзи для новостей
+    NEWS_EMOJIS = ['🔹', '🔸', '⚡', '✨', '📌', '📍', '💎', '💡', '🔖', '🚩', '🌀', '💠']
+    
     def __init__(self):
         self.ai_analyzer = NewsAnalyzer()
     
@@ -46,6 +52,12 @@ class DigestBuilder:
         Вызывается планировщиком каждые 3 часа
         """
         try:
+            # === СИСТЕМНЫЙ "ТИХИЙ РЕЖИМ" (23:00 - 08:00) ===
+            current_hour = datetime.now().hour
+            if current_hour >= 23 or current_hour < 8:
+                logger.info(f"🌙 Тихий режим (23:00-08:00). Дайджест пропущен. (Сейчас {current_hour}:00)")
+                return
+
             logger.info(f"📰 Начало сборки {self.DIGEST_INTERVAL_HOURS}-часового дайджеста...")
             
             # 1. Получить новости за период
@@ -77,9 +89,6 @@ class DigestBuilder:
     async def _get_digest_news(self) -> List[Dict]:
         """
         Получить новости для дайджеста
-        
-        ВАЖНО: Выбираем ВСЕ непубликованные новости (не только за последние N часов),
-        иначе старые новости никогда не будут опубликованы!
         """
         try:
             async with db.conn.execute(
@@ -106,9 +115,6 @@ class DigestBuilder:
     async def _categorize_and_deduplicate(self, news_list: List[Dict]) -> Dict[str, List[Dict]]:
         """
         Категоризировать новости и применить дедупликацию
-        
-        Returns:
-            Словарь {категория: [новости]}
         """
         categorized = {cat: [] for cat in self.CATEGORIES.keys()}
         
@@ -138,9 +144,6 @@ class DigestBuilder:
     async def _categorize_news(self, news_item: Dict) -> str:
         """
         Определить категорию новости с помощью AI
-        
-        Returns:
-            Ключ категории из CATEGORIES
         """
         try:
             # Используем priority и ключевые слова для категоризации
@@ -148,7 +151,6 @@ class DigestBuilder:
             summary_lower = news_item.get('summary', '').lower()
             
             # Простая категоризация по ключевым словам
-            # (можно заменить на AI, но это быстрее)
             
             if news_item['priority'] >= 8:
                 return 'main_events'
@@ -173,21 +175,15 @@ class DigestBuilder:
     async def _format_digest(self, categorized_news: Dict[str, List[Dict]]) -> str:
         """
         Форматировать дайджест в HTML
-        
-        Args:
-            categorized_news: {категория: [новости]}
-            
-        Returns:
-            HTML-текст дайджеста
         """
-        now = datetime.now()
-        
-        # Заголовок
+        # Заголовок (без времени и даты)
         lines = [
             f"📰 <b>ДАЙДЖЕСТ КРИПТОНОВОСТЕЙ</b>",
-            f"⏰ {now.strftime('%d.%m.%Y %H:%M')}",
-            ""
+            "" 
         ]
+        
+        # Получаем текущий event loop для перевода
+        loop = asyncio.get_event_loop()
         
         # Категории
         for category, news_items in categorized_news.items():
@@ -196,17 +192,34 @@ class DigestBuilder:
             
             cat_info = self.CATEGORIES[category]
             lines.append(f"{cat_info['emoji']} <b>{cat_info['title']}</b>")
+            lines.append("") # Отступ после заголовка категории
             
-            for news_item in news_items[:5]:  # Максимум 5 новостей на категорию
-                # Укороченный заголовок
-                title = news_item['dedup_title'][:100]
-                if len(news_item['dedup_title']) > 100:
+            for news_item in news_items[:2]: # Максимум 2 новости на категорию (компактный режим)
+                # 1. Перевод на лету (ПРИНУДИТЕЛЬНО)
+                original_title = news_item['dedup_title']
+                translated_title = original_title
+                
+                try:
+                    # Используем синхронный метод в executor для скорости
+                    translation_result = await loop.run_in_executor(
+                        None, 
+                        translator.translate_text, 
+                        original_title, 
+                        'auto', 
+                        'ru'
+                    )
+                    if translation_result:
+                        translated_title = translation_result
+                except Exception as e:
+                    logger.warning(f"Ошибка перевода в дайджесте: {e}")
+
+                # Укорачиваем заголовок
+                title = translated_title[:150] # Чуть больше лимит т.к. русский длиннее
+                if len(translated_title) > 150:
                     title += "..."
                 
-                # Встраиваем ссылку нативно в Telegram
+                # 2. Ссылка
                 url = news_item['url']
-                
-                # Проверяем metadata для Telegram источников
                 metadata_str = news_item.get('metadata')
                 if metadata_str:
                     try:
@@ -216,12 +229,17 @@ class DigestBuilder:
                     except:
                         pass
                 
-                lines.append(f"• <a href=\"{url}\">{title}</a>")
+                # 3. Случайный эмодзи
+                emoji = random.choice(self.NEWS_EMOJIS)
+                
+                # 4. Форматирование строки
+                lines.append(f"{emoji} <a href=\"{url}\">{title}</a>")
+                lines.append("") # Пустая строка (интервал) между новостями
             
-            lines.append("")  # Пустая строка между категориями
+            # (Пустая строка между категориями уже обеспечивается последним append внутри цикла)
         
-        # Разделитель
-        lines.append("───────────────────────")
+        # Разделитель УБРАН 
+        # lines.append("───────────────────────") 
         
         # Цены и индекс страха
         try:
@@ -283,7 +301,7 @@ class DigestBuilder:
                 chat_id=config.telegram_channel_id,
                 text=digest_html,
                 parse_mode="HTML",
-                disable_web_page_preview=False,  # Показываем превью ссылок
+                disable_web_page_preview=True,  # СКРЫВАЕМ ПРЕВЬЮ (чтобы ссылка не лезла)
                 reply_markup=keyboard.as_markup()
             )
             

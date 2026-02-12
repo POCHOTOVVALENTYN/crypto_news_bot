@@ -14,6 +14,7 @@ from services.message_builder import (
     AdvancedMessageFormatter, RichMediaMessage,
     get_multiple_crypto_prices, FearGreedIndexTracker
 )
+from services.comment_manager import CommentManager # <--- НОВОЕ
 from services.content_deduplicator import ContentDeduplicator
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -127,30 +128,37 @@ async def publish_single_news(news_item: Dict, is_breaking: bool = False):
         # Получаем полный текст (уже переведенный)
         full_content = news_item.get('full_content') or news_item.get('summary', '')
         
-        # Извлекаем ключевые моменты и переводим их
+        # Извлекаем ключевые моменты (ПРИНУДИТЕЛЬНО, для буллет-поинтов)
         key_points = []
-        if full_content and len(full_content) > 500:
+        if full_content and len(full_content) > 300: # Даже для средних текстов
             try:
-                analyzer = NewsAnalyzer()
-                loop = asyncio.get_event_loop()
-                translator = analyzer.get_translator()
+                # Сначала пробуем извлечь простые пункты без AI (быстро)
+                from services.content_summarizer import ContentSummarizer
+                key_points_raw = ContentSummarizer.extract_key_points(full_content)
                 
-                key_points_raw = await analyzer.extract_key_points(full_content)
-                
-                # Переводим ключевые моменты на русский
-                for point in key_points_raw:
-                    detected_lang = await loop.run_in_executor(None, translator.detect_language, point)
+                # Если не вышло, или мало, можно было бы AI, но пока stay simple
+                if not key_points_raw and news_item.get('summary'):
+                     # Если summary длинное, разбиваем его
+                     key_points_raw = ContentSummarizer.extract_key_points(news_item['summary'])
+
+                # Переводим ключевые моменты на русский (если они есть)
+                if key_points_raw:
+                    loop = asyncio.get_event_loop()
+                    from services.translator import translator # Local import to avoid cycle
                     
-                    if detected_lang and detected_lang != 'ru':
-                        translated_point = await loop.run_in_executor(
-                            None,
-                            translator.translate_text,
-                            point,
-                            'ru'
-                        )
-                        key_points.append(translated_point or point)
-                    else:
-                        key_points.append(point)
+                    for point in key_points_raw:
+                        detected_lang = await loop.run_in_executor(None, translator.detect_language, point)
+                        
+                        if detected_lang and detected_lang != 'ru':
+                            translated_point = await loop.run_in_executor(
+                                None,
+                                translator.translate_text,
+                                point,
+                                'ru'
+                            )
+                            key_points.append(translated_point or point)
+                        else:
+                            key_points.append(point)
                 
                 logger.info(f"✅ Извлечено {len(key_points)} ключевых моментов на русском")
                 
@@ -193,7 +201,8 @@ async def publish_single_news(news_item: Dict, is_breaking: bool = False):
             technical_analysis=technical_analysis,
             key_points=key_points,
             full_content=full_content,
-            footer_template=footer_template
+            footer_template=footer_template,
+            is_breaking=is_breaking
         )
         
         # Проверяем metadata для встраивания Telegram ссылок
@@ -229,7 +238,8 @@ async def publish_single_news(news_item: Dict, is_breaking: bool = False):
                             technical_analysis=technical_analysis,
                             key_points=key_points,
                             full_content=full_content,
-                            footer_template=footer_template
+                            footer_template=footer_template,
+                            is_breaking=is_breaking
                         )
             except Exception as e:
                 logger.debug(f"Ошибка обработки metadata: {e}")
@@ -253,6 +263,9 @@ async def publish_single_news(news_item: Dict, is_breaking: bool = False):
                 logger.info(f"🔥 Breaking news опубликована (MsgID: {message_id})")
             else:
                 logger.info(f"✅ Новость опубликована (MsgID: {message_id})")
+            
+            # === НОВОЕ: Авто-комментарий с дисклеймером ===
+            asyncio.create_task(CommentManager.post_disclaimer_comment(bot, message_id))
             
             return message_id
         else:

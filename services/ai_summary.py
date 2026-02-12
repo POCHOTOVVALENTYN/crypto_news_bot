@@ -47,6 +47,9 @@ class NewsAnalyzer:
 - Заголовок должен быть информативным и цепляющим
 - Описание - только ключевая информация, без воды
 - Если новость не относится к крипто - верни importance: "Low"
+- НЕ ИСПОЛЬЗУЙ MARKDOWN СИНТАКСИС ([text](url), **bold**, _italic_)
+- Используй только обычный текст без форматирования
+- Не добавляй квадратные скобки [] в заголовок или описание
 
 ФОРМАТ ОТВЕТА (только JSON, без Markdown):
 {{
@@ -62,7 +65,7 @@ class NewsAnalyzer:
         # Менеджер сам попробует Gemini -> DeepSeek -> OpenAI
         result = await self.ai_manager.analyze_json(
             prompt=prompt, 
-            system_prompt="You are a crypto news editor. Output only valid JSON."
+            system_prompt="You are a crypto news editor. Output only valid JSON. Never use Markdown syntax in text fields."
         )
         
         return result
@@ -94,47 +97,50 @@ class NewsAnalyzer:
             
             input_text += f"{i+1}. {title}\nСсылка: {url}\nСуть: {summary}\n\n"
 
-        prompt = f"""Ты — профессиональный редактор крипто-новостного канала.
-Твоя задача — составить ЛАКОНИЧНЫЙ ДАЙДЖЕСТ (сводку) новостей за {period_name}.
+        prompt = f"""Ты — профессиональный аналитик и редактор крипто-новостного канала.
+Твоя задача — составить ИТОГОВЫЙ ДАЙДЖЕСТ ЗА {period_name} ("Mega-Recap").
 
-ВОТ СПИСОК НОВОСТЕЙ:
+ВОТ СПИСОК НОВОСТЕЙ ССЫЛКАМИ И СУТЬЮ:
 {input_text}
 
-ТРЕБОВАНИЯ К ДАЙДЖЕСТУ:
-1. Заголовок: "🗞 **Главное за {period_name}**" (или "неделю").
-2. Формат — ТОЛЬКО список заголовков.
-3. НИКАКИХ ОПИСАНИЙ, ТЕКСТОВ ИЛИ СУТИ. Только кликабельный заголовок.
-4. Выбери ТОП-5-7 самых важных тем. Сгруппируй дубликаты.
-5. Каждый пункт должен начинаться с эмодзи, соответствующего теме.
-6. Ссылка должна быть встроена в сам текст заголовка.
-   Пример HTML: `💎 <a href="URL">Bitcoin пробил $100k</a>`
-7. В конце: Короткий итог одной фразой (жирным шрифтом).
-8. СТРОГО HTML (b, i, a, code, s). Без Markdown!
-9. ВАЖНО: Добавляй пустую строку между пунктами списка для читаемости!
+ТРЕБОВАНИЯ К ФОРМАТУ (СТРОГО HTML, без Markdown):
 
-ПРИМЕР СТРУКТУРЫ:
-🗞 **Главное за сутки**
+<b>📅 Итоги дня: Главное за 24 часа</b>
 
-💎 <a href="...">Bitcoin пробил $100k</a>
+<b>📈 Настроение рынка:</b>
+[Здесь напиши 2-3 предложения с общим анализом: что происходило на рынке, рос он или падал, какие были главные тренды. Сделай вывод о настроении инвесторов.]
 
-⚖️ <a href="...">SEC одобрила ETF на Solana</a>
+<b>🔥 Топ событий:</b>
 
-...
+1. ЭМОДЗИ <a href="URL_1"><b>Заголовок первой важной новости</b></a>
+[Краткое описание сути новости в 1 предложение. Почему это важно?]
 
-📊 **Итог**: Рынок показывает уверенный рост на фоне новостей.
+2. ЭМОДЗИ <a href="URL_2"><b>Заголовок второй новости</b></a>
+[Краткое описание...]
+
+... (Всего 5-7 самых важных новостей)
+
+<b>📊 Вывод:</b> [Короткая финальная фраза-напутствие или прогноз на завтра]
+
+ВАЖНО:
+- Используй теги <b>, <i>, <a href="...">. Не используй Markdown (**bold**).
+- Ссылки вшивай в заголовки.
+- Выбирай только САМОЕ важное. Группируй похожие новости.
+- Эмодзи должны соответствовать теме новости.
 """
         
         # 1. Пробуем через AI
         result_text = await self.ai_manager.generate_text(
             prompt=prompt,
-            system_prompt="You are a helpful crypto news editor. Output HTML.",
-            timeout=120.0 # Дайджест может генерироваться долго
+            system_prompt="You are a crypto market analyst. Output valid HTML.",
+            timeout=180.0 # Дайджест может генерироваться долго
         )
         
         if result_text:
             # Очистка от markdown блоков, если они есть
             clean_text = result_text.replace("```html", "").replace("```", "").strip()
-            clean_text += f"\n\n#дайджест"
+            # Убираем возможные лишние теги html/body если модель их добавила
+            clean_text = clean_text.replace("<html>", "").replace("</html>", "").replace("<body>", "").replace("</body>", "")
             return clean_text
             
         # 2. Fallback на Simple Digest
@@ -146,7 +152,12 @@ class NewsAnalyzer:
         Генерация простого дайджеста без участия AI.
         Исправленная и укрепленная версия.
         """
-        digest = f"🗞 **Главное за {period_name}** (Simple Mode)\n\n"
+        digest = f"<b>📅 Итоги дня: Главное за {period_name}</b> (Simple Mode)\n\n"
+        
+        digest += "<b>📈 Настроение рынка:</b>\n"
+        digest += "Данные недоступны (AI сервис временно отключен).\n\n"
+        
+        digest += "<b>🔥 Топ событий:</b>\n\n"
         
         # Берем 7 новостей
         count = 0
@@ -184,9 +195,8 @@ class NewsAnalyzer:
             elif "падение" in t_lower or "обвал" in t_lower: emoji = "📉"
             elif "hack" in t_lower or "взлом" in t_lower: emoji = "🚨"
             
-            digest += f"{emoji} <a href=\"{url}\">{title}</a>\n\n"
+            digest += f"{emoji} <a href=\"{url}\"><b>{title}</b></a>\n\n"
             count += 1
             
-        digest += f"📊 **Итог**: {len(news_list)} важных новостей за этот период.\n"
-        digest += f"\n#дайджест #SimpleMode"
+        digest += f"<b>📊 Вывод:</b> {len(news_list)} важных новостей за этот период."
         return digest

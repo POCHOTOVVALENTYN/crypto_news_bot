@@ -15,8 +15,7 @@ def get_free_menu(user_id: int = None) -> ReplyKeyboardMarkup:
             KeyboardButton(text="💎 VIP-консультация")
         ],
         [
-            KeyboardButton(text="👨‍💻 Об Авторе"),
-            KeyboardButton(text="📞 Поддержка")
+            KeyboardButton(text="👨‍💻 Об Авторе")
         ],
 
         [

@@ -1,12 +1,15 @@
 from aiogram import Router, F
+from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, LabeledPrice
 from aiogram.types import SuccessfulPayment
+from aiogram.fsm.context import FSMContext
 from datetime import datetime
 import logging
 
 from database import db
 from loader import bot
 from config import config
+from utils.states import SupportState
 from keyboards.builders import build_premium_offer_keyboard, build_discount_offer_keyboard
 from keyboards.reply import get_premium_menu
 
@@ -151,6 +154,7 @@ async def initiate_payment(callback: CallbackQuery):
 
 
 
+
 # === ШАГ 5: PRE-CHECKOUT (Валидация перед оплатой) ===
 
 @router.pre_checkout_query()
@@ -162,6 +166,15 @@ async def process_pre_checkout(pre_checkout: PreCheckoutQuery):
     # Парсим payload с UUID
     try:
         parts = pre_checkout.invoice_payload.split("_")
+        
+        # CONSULTATION PAYLOADS: wallet_300, vip_350
+        if parts[0] in ['wallet', 'vip']:
+            # Payload format: type_price (e.g. wallet_300) - упрощенный для консультаций
+            # В данном случае мы не проверяем UUID так строго, так как это stateless
+            await pre_checkout.answer(ok=True)
+            logger.info(f"✅ Pre-checkout OK (Consultation): {pre_checkout.invoice_payload}")
+            return
+
         if len(parts) < 5:  # Старый формат без UUID
             user_id_from_payload = int(parts[2])
         else:  # Новый формат с UUID
@@ -191,7 +204,7 @@ async def process_pre_checkout(pre_checkout: PreCheckoutQuery):
 # === ШАГ 6: УСПЕШНАЯ ОПЛАТА ===
 
 @router.message(F.successful_payment)
-async def process_successful_payment(message: Message):
+async def process_successful_payment(message: Message, state: FSMContext):
     """Обработка успешной оплаты"""
     payment_info: SuccessfulPayment = message.successful_payment
     user_id = message.from_user.id
@@ -201,6 +214,56 @@ async def process_successful_payment(message: Message):
     try:
         parts = payload.split("_")
         
+        # === ОБРАБОТКА КОНСУЛЬТАЦИЙ (WALLET / VIP) ===
+        if parts[0] in ['wallet', 'vip']:
+            consultation_type = parts[0] # wallet or vip
+            price = int(parts[1])
+            
+            # 1. Уведомляем пользователя
+            await message.answer(
+                "✅ <b>Оплата успешно получена! Спасибо за доверие.</b>\n\n"
+                "Я передал информацию BLEXLER. Мы свяжемся с вами в ближайшее время для выбора времени.",
+                parse_mode="HTML"
+            )
+            
+            # 2. Отправляем Анкету
+            await message.answer(
+                "📝 <b>Чтобы встреча прошла максимально эффективно, пожалуйста, ответьте на пару вопросов прямо здесь:</b>\n\n"
+                "1. Ваш текущий портфель (скриншот или список монет).\n"
+                "2. Ваш опыт в крипте (новичок / любитель / профи).\n"
+                "3. Какой у вас депозит (примерно).\n"
+                "4. Удобное время для созвона (дни недели и время по МСК).\n"
+                "5. Предпочтительный способ связи (Telegram звонок / Zoom / Google Meet).\n\n"
+                "<i>Просто напишите ответы сообщением ниже 👇</i>",
+                parse_mode="HTML"
+            )
+            
+            # 3. Создаем Relay Session
+            from services.relay_manager import relay_manager
+            from utils.states import SupportState
+            
+            # Создаем сессию в БД
+            session_id = await relay_manager.create_session(
+                user_id=user_id,
+                session_type='consultation_planning'
+            )
+            
+            # Включаем для пользователя режим пересылки
+            await state.set_state(SupportState.active_session)
+            await state.update_data(session_id=session_id)
+            
+            # Логирование
+            logger.info(
+                f"💰 CONSULTATION PAID: {user_id} type={consultation_type} price={price} "
+                f"charge_id={payment_info.telegram_payment_charge_id} session={session_id}"
+            )
+            
+            # Геймификация
+            await db.log_activity(user_id, 'purchase_consultation', metadata={'amount': price, 'type': consultation_type})
+            
+            return
+
+
         # Проверяем формат: premium_custom_userid_amount_uuid_sessionid
         if parts[0] == "premium" and parts[1] == "custom":
             # CUSTOM PRICE PAYMENT
@@ -436,3 +499,55 @@ async def process_successful_payment(message: Message):
             "Обратитесь в поддержку с этим сообщением:\n"
             f"Charge ID: {payment_info.telegram_payment_charge_id}"
         )
+
+
+# === TEST TOOLS ===
+
+@router.message(Command("test_pay_consult"))
+async def test_successful_payment(message: Message, state: FSMContext):
+    """
+    Тестовая команда для симуляции оплаты.
+    Доступна только разработчику.
+    """
+    # 1. Защита по ID
+    if message.from_user.id != 7453894165:
+        return
+
+    # 2. Парсинг аргументов
+    args = message.text.split()
+    consult_type = args[1] if len(args) > 1 else "wallet"
+    
+    if consult_type not in ['wallet', 'vip']:
+        await message.answer("Usage: /test_pay_consult [wallet|vip]")
+        return
+
+    # 3. Подготовка данных
+    price = 300 if consult_type == 'wallet' else 350
+    stars = 20500 if consult_type == 'wallet' else 24000
+    
+    payload = f"{consult_type}_{price}"
+    
+    # 4. Создание Mock-объекта оплаты
+    mock_payment = SuccessfulPayment(
+        currency="XTR",
+        total_amount=stars,
+        invoice_payload=payload,
+        telegram_payment_charge_id=f"TEST_CHARGE_{datetime.now().timestamp()}",
+        provider_payment_charge_id="TEST_PROVIDER"
+    )
+    
+    # 5. Клонирование сообщения с добавлением successful_payment
+    # Используем model_copy для создания копии с измененным полем
+    try:
+        mock_message = message.model_copy(update={'successful_payment': mock_payment})
+        
+        await message.answer(f"🔄 <b>TEST MODE:</b> Simulating payment for {consult_type}...", parse_mode="HTML")
+        
+        # 6. Вызов реального обработчика
+        await process_successful_payment(mock_message, state)
+        
+    except Exception as e:
+        logger.error(f"Test command failed: {e}", exc_info=True)
+        await message.answer(f"❌ Test failed: {e}")
+
+
