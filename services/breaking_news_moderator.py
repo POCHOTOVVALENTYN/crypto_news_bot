@@ -78,7 +78,7 @@ class BreakingNewsModerator:
         
         try:
             # Переводим на русский перед модерацией
-            from services.ai_summary import translator
+            from services.translator import translator
             
             # Переводим заголовок
             translated_title = await translator.translate_text(news_item['title'])
