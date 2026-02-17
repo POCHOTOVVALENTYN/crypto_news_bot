@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     discussion_group_id: int = Field(-1003810680361, description="ID группы для комментариев")
     disclaimer_url: Optional[str] = Field("https://telegra.ph/Disklejmer-kanala-BLEXLER--INVEST-02-11", description="Ссылка на Telegraph с дисклеймером")
 
+    # === ADMIN LIST ===
+    admin_ids: List[int] = Field(default=[830196453, 1363924657], description="List of admin IDs")
+
     # === AI PROVIDERS (Хотя бы один обязателен) ===
     # Groq - новый провайдер с щедрым free tier (750k токенов/день)
     groq_api_key: Optional[str] = Field(None, description="Groq API key")

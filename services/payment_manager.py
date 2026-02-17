@@ -85,7 +85,7 @@ class PaymentManager:
             ])
             
             # Send to Admin Channel or Super Admin
-            target_admin_id = config.admin_ids[0] # Send to first admin for now
+            target_admin_id = config.admin_ids[0] if config.admin_ids else 830196453 # Fallback to hardcoded ID if empty
             
             if is_photo:
                 await bot.send_photo(target_admin_id, proof_file_id, caption=admin_text, parse_mode="HTML", reply_markup=admin_markup)

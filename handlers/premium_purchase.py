@@ -280,16 +280,11 @@ async def create_premium_invoice(callback: CallbackQuery, state: FSMContext):
         title = "💎 Premium-подписка (скидка)"
         description = f"Premium доступ на 30 дней ({amount_usd}$, скидка 100$)"
     
-    # Payload для идентификации платежа
-    payload = json.dumps({
-        'type': 'premium_subscription',
-        'tier': tier,
-        'amount_usd': amount_usd,
-        'amount_stars': amount_stars,
-        'period_days': 30,
-        'user_id': user_id,
-        'timestamp': datetime.now().isoformat()
-    })
+    # Payload для идентификации платежа (MAX 128 chars!)
+    # Format: premium_{tier}_{stars}_{user_id}
+    # tier: b=base, d=discount
+    short_tier = 'b' if tier == 'base' else 'd'
+    payload = f"pr_{short_tier}_{amount_stars}_{user_id}"
     
     # Создаём invoice
     prices = [LabeledPrice(label="XTR", amount=amount_stars)]
@@ -431,8 +426,21 @@ async def successful_payment_handler(message: Message):
         
         # Проверяем формат payload
         if payload_str.startswith('{'):
-            # Старый формат JSON
+            # Старый формат JSON (для совместимости)
             payload = json.loads(payload_str)
+        elif payload_str.startswith('pr_'):
+            # Новый короткий формат: pr_{tier}_{stars}_{user_id}
+            parts = payload_str.split('_')
+            tier_code = parts[1]
+            stars_amount = int(parts[2])
+            uid = int(parts[3])
+            
+            payload = {
+                'type': 'premium_subscription',
+                'amount_usd': PREMIUM_PRICES['base']['usd'] if tier_code == 'b' else PREMIUM_PRICES['with_discount']['usd'],
+                'amount_stars': stars_amount,
+                'period_days': 30
+            }
         else:
             # Новый короткий формат: "consultation_type_amount" или "premium_amount"
             parts = payload_str.split('_')
@@ -446,7 +454,7 @@ async def successful_payment_handler(message: Message):
                     'amount_stars': payment.total_amount
                 }
             else:
-                # Premium
+                # Premium fallback
                 payload = {
                     'type': 'premium_subscription',
                     'amount_usd': int(parts[1]) if len(parts) > 1 else PREMIUM_PRICES['base']['usd'],
