@@ -232,11 +232,12 @@ async def main():
         logger.info("✅ Мониторинг breaking news настроен")
         
         # ✅ НОВОЕ: Автопубликация истекших breaking news (каждую минуту)
+        # ✅ НОВОЕ: Обработка истекших breaking news (отмена публикации)
         scheduler.add_job(
-            breaking_moderator.auto_publish_expired,
+            breaking_moderator.handle_expired_requests,
             IntervalTrigger(minutes=1),
-            id="breaking_news_autopublish",
-            name="Breaking News Auto-publish"
+            id="breaking_news_expiration",
+            name="Breaking News Expiration Check"
         )
         logger.info("✅ Автопубликация breaking news настроена")
         scheduler.add_job(

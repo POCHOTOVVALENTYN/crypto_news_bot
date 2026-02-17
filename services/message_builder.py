@@ -1,502 +1,157 @@
-# services/message_builder.py
+"""
+Построитель сообщений для Telegram
+"""
 import logging
+from typing import Optional, List, Dict
+from datetime import datetime
 import re
-import aiohttp
-import random
-from typing import Optional, Dict, List
-from functools import lru_cache
-import asyncio
-from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
-
-import os
-from aiogram.types import FSInputFile
+from config import CHANNELS
+from loader import bot
 
 logger = logging.getLogger(__name__)
 
 
-# === ASYNC LRU CACHE (Простая реализация) ===
-def async_lru_cache(maxsize=128, ttl=300):
-
-    """Декоратор для кэширования асинхронных функций с TTL."""
-
-    def decorator(func):
-        cache = {}
-        cache_times = {}
-        _lock = None  # Ленивая инициализация
-
-        def get_lock():
-            nonlocal _lock
-            if _lock is None:
-                _lock = asyncio.Lock()
-            return _lock
-
-        async def wrapper(*args, **kwargs):
-            key = str(args) + str(sorted(kwargs.items()))
-            lock = get_lock()  # Получаем lock при первом вызове
-
-            async with lock:
-                # Проверяем наличие и актуальность
-                if key in cache:
-                    age = asyncio.get_event_loop().time() - cache_times[key]
-                    if age < ttl:
-                        logger.debug(f"✅ Cache HIT: {func.__name__}")
-                        return cache[key]
-                    else:
-                        del cache[key]
-                        del cache_times[key]
-
-            # Выполняем функцию
-            # logger.debug(f"❌ Cache MISS: {func.__name__}")
-            result = await func(*args, **kwargs)
-
-            lock = get_lock()
-            async with lock:
-                cache[key] = result
-                cache_times[key] = asyncio.get_event_loop().time()
-
-                # Ограничиваем размер кэша
-                if len(cache) > maxsize:
-                    oldest_key = min(cache_times, key=cache_times.get)
-                    del cache[oldest_key]
-                    del cache_times[oldest_key]
-
-            return result
-
-        wrapper.cache_clear = lambda: cache.clear() or cache_times.clear()
-        return wrapper
-
-    return decorator
-
-
-# === ТРЕКЕР ЦЕН (С КЭШИРОВАНИЕМ) ===
-@async_lru_cache(maxsize=1, ttl=300)  # 5 минут кэш, 1 запись
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(2), 
-       retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)))
-async def get_multiple_crypto_prices() -> Optional[Dict]:
-    """Получает цены BTC, ETH, SOL с автоматическим кэшированием"""
-    # Удаляем try/except чтобы tenacity ловила ошибки
-    url = "https://api.coingecko.com/api/v3/simple/price"
-    params = {
-        "ids": "bitcoin,ethereum,solana",
-        "vs_currencies": "usd",
-        "include_24hr_change": "true"
-    }
-
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params, timeout=10) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                prices = {}
-
-                for coin in ["bitcoin", "ethereum", "solana"]:
-                    if coin in data:
-                        prices[coin] = {
-                            "price": data[coin]["usd"],
-                            "change": data[coin].get("usd_24h_change", 0)
-                        }
-
-                return prices
-    return None
-
-
-class CryptoMultiPriceTracker:
-    @staticmethod
-    def format_multi_prices(prices: Dict[str, Dict]) -> str:
-        if not prices:
-            return ""
-
-        lines = []
-        if "bitcoin" in prices:
-            lines.append(
-                f"🪙 BTC: ${prices['bitcoin']['price']:,} "
-                f"({prices['bitcoin']['change']:+.2f}%)"
-            )
-        if "ethereum" in prices:
-            lines.append(
-                f"🔷 ETH: ${prices['ethereum']['price']:,} "
-                f"({prices['ethereum']['change']:+.2f}%)"
-            )
-        if "solana" in prices:
-            lines.append(
-                f"🟣 SOL: ${prices['solana']['price']:.2f} "
-                f"({prices['solana']['change']:+.2f}%)"
-            )
-
-        return "💰 <b>Цены (24h):</b>\n" + "\n".join(lines)
-
-
-# === ИНДЕКС СТРАХА (С КЭШИРОВАНИЕМ) ===
-class FearGreedIndexTracker:
-    @staticmethod
-    @async_lru_cache(maxsize=1, ttl=3600)  # 1 час кэш
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), 
-           retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)))
-    async def get_fear_greed_index() -> Optional[Dict]:
-        """Получает индекс страха с автоматическим кэшированием"""
-        async with aiohttp.ClientSession() as session:
-            async with session.get("https://api.alternative.me/fng/", timeout=10) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if data.get("data"):
-                        item = data["data"][0]
-                        result = {
-                            "value": int(item["value"]),
-                            "label": item["value_classification"]
-                        }
-
-                        # Перевод
-                        translations = {
-                            "Extreme Fear": "Экстремальный страх",
-                            "Fear": "Страх",
-                            "Neutral": "Нейтрально",
-                            "Greed": "Жадность",
-                            "Extreme Greed": "Экстремальная жадность"
-                        }
-                        result["label"] = translations.get(result["label"], result["label"])
-
-                        return result
-        return None
-
-
-# === РАБОТА С КАРТИНКАМИ ===
-class ImageExtractor:
-    @staticmethod
-    def extract_image_from_entry(entry: Dict) -> Optional[str]:
-        """Извлекает URL изображения из RSS entry"""
-        try:
-            if 'media_content' in entry:
-                return entry.media_content[0]['url']
-
-            if 'links' in entry:
-                for link in entry.links:
-                    if 'image' in link.type:
-                        return link.href
-
-            if 'summary' in entry:
-                match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', entry.summary)
-                if match:
-                    return match.group(1)
-
-        except Exception:
-            pass
-
-        return None
-
-    @staticmethod
-    def is_valid_image_url(url: Optional[str]) -> bool:
-        if not url:
-            return False
-        # Проверка URL
-        if url.lower().startswith('http') and not url.endswith('.svg'):
-            return True
-        # Проверка локального файла
-        if os.path.exists(url) and os.path.isfile(url):
-            return True
-        return False
-
-
-# === ФОРМАТИРОВАНИЕ ===
 class AdvancedMessageFormatter:
-    COIN_IMAGES = {
-        "BTC": "https://s3.coinmarketcap.com/static-gravity/image/5cc0b99a8095453bb209c2963feb7e82.png",
-        "ETH": "https://s3.coinmarketcap.com/static-gravity/image/28c114dc354e4444983637402dc4db42.png",
-        "SOL": "https://s3.coinmarketcap.com/static-gravity/image/358e2d45387c47d792b0024ba1622325.png",
-        "General": "https://images.unsplash.com/photo-1621761191319-c6fb62004040?auto=format&fit=crop&w=1000&q=80"
-    }
+    """Усовершенствованный форматировщик сообщений"""
+    
+    def __init__(self):
+        self.max_length = 4096
+        
+    async def format_news_message(self, news_item: Dict, is_digest: bool = False, locale: str = 'ru') -> str:
+        """
+        Форматирование одной новости для публикации
+        
+        Args:
+            news_item: Словарь с данными новости
+            is_digest: Это дайджест или отдельная новость?
+            locale: Язык (пока только ru)
+        """
+        title = news_item.get('title', '')
+        summary = news_item.get('summary', '')
+        source = news_item.get('source', '')
+        url = news_item.get('url', '')
+        # metadata = news_item.get('metadata', {})
+        
+        # Очищаем заголовок
+        title = self.clean_text(title)
+        
+        # Очищаем summary
+        if summary:
+            summary = self.clean_text(summary)
+            # Дедупликация: если summary начинается с title (или очень похоже), убираем это
+            # Нормализуем для сравнения
+            clean_title = re.sub(r'[^\w\s]', '', title.lower())
+            clean_summary = re.sub(r'[^\w\s]', '', summary.lower())
+            
+            if clean_summary.startswith(clean_title):
+                # Убираем дубль заголовка из начала summary
+                # Берем длину заголовка + небольшой запас на символы
+                summary = summary[len(title):].strip()
+                # Удаляем возможные оставшиеся знаки препинания в начале
+                summary = re.sub(r'^[\.\,\:\-\s]+', '', summary)
 
-    @staticmethod
-    def get_coin_image(coin: str) -> str:
-        return AdvancedMessageFormatter.COIN_IMAGES.get(
-            coin,
-            AdvancedMessageFormatter.COIN_IMAGES["General"]
+        # Формируем тело сообщения
+        message_parts = []
+        
+        if is_digest:
+            # Для дайджеста формат: 🔹 <Заголовок>
+            # <Текст>
+            message_parts.append(f"🔹 <b>{title}</b>\n")
+            if summary:
+                message_parts.append(f"{summary}\n")
+        else:
+            # Для отдельного поста:
+            # 🔥 <ЗАГОЛОВОК>
+            # <Текст>
+            # ...
+            
+            # Эмодзи в зависимости от важности (если есть)
+            emoji = "⚡️"
+            if news_item.get('priority', 0) >= 8:
+                emoji = "🔥"
+            
+            message_parts.append(f"{emoji} <b>{title.upper()}</b>\n")
+            
+            if summary:
+                message_parts.append(f"{summary}\n")
+            
+            # Добавляем рыночные данные если есть (mockup)
+            # message_parts.append("\n📈 BTC: $65,120 | ETH: $3,450")
+            
+        # Ссылка на источник (если нужно)
+        # if source:
+        #    message_parts.append(f"\nИсточник: {source}")
+            
+        final_text = "\n".join(message_parts)
+        
+        # Обрезаем если слишком длинно
+        if len(final_text) > self.max_length:
+            final_text = final_text[:self.max_length-100] + "..."
+            
+        return final_text
+
+    def create_digest_header(self, digest_type: str = "daily") -> str:
+        """Заголовок дайджеста"""
+        date_str = datetime.now().strftime("%d.%m.%Y")
+        
+        if digest_type == "daily":
+            return (
+                f"📰 <b>CRYPTO DAILY • {date_str}</b>\n"
+                f"Главные новости за последние 24 часа\n"
+                f"➖➖➖➖➖➖➖➖➖➖\n"
+            )
+        elif digest_type == "weekly":
+            return (
+                f"🗞 <b>CRYPTO WEEKLY • {date_str}</b>\n"
+                f"Главные события недели\n"
+                f"➖➖➖➖➖➖➖➖➖➖\n"
+            )
+        return ""
+
+    def create_digest_footer(self) -> str:
+        """Подвал дайджеста"""
+        return (
+            f"\n➖➖➖➖➖➖➖➖➖➖\n"
+            f"🔸 <a href='https://t.me/blexler_support_bot'>BLEXLER SUPPORT</a>\n"
+            f"🔸 <a href='https://t.me/blexler_news'>BLEXLER NEWS</a>"
         )
-
-    @staticmethod
-    def clean_text(text: str) -> str:
-        """Очистка текста от HTML тегов, Markdown ссылок и лишних символов"""
+        
+    def clean_text(self, text: str) -> str:
+        """Очистка текста от мусора, ссылок и лишних символов"""
         if not text:
             return ""
-        
-        import html
-        
-        # 1. Декодируем HTML entities (&nbsp; → пробел, &amp; → &, и т.д.)
-        text = html.unescape(text)
-        
-        # 2. Удаляем Markdown ссылки: [text](url) -> text
-        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
-        
-        # 3. Удаляем HTML теги
-        text = re.sub(r'<[^>]+>', '', text)
-        
-        # 4. Удаляем артефакты вроде [...], "Читать далее"
-        text = text.replace('[…]', '').replace('...', '')
-        # Удаляем оставшиеся квадратные скобки
-        text = text.replace('[', '').replace(']', '')
-        text = re.sub(r'Читать далее.*', '', text, flags=re.IGNORECASE)
-        
-        # 5. Удаляем множественные пробелы
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        return text
-    
-    
-    @staticmethod
-    def insert_random_link(text: str, url: str) -> str:
-        """Рандомно вставляет ссылку в одно из слов текста"""
-        # Разбиваем текст на слова (сохраняем HTML теги)
-        # Находим все слова (не HTML теги)
-        words = re.findall(r'\b\w+\b', text)
-        if not words:
-            return text
-        
-        # Выбираем случайное слово
-        random_word = random.choice(words)
-        
-        # Ищем слово в тексте (учитывая, что оно может быть частью HTML тега)
-        # Заменяем только первое вхождение слова (не в HTML теге)
-        pattern = r'\b' + re.escape(random_word) + r'\b'
-        
-        # Проверяем, не находится ли слово внутри HTML тега
-        def replace_func(match):
-            start = match.start()
-            # Проверяем, что мы не внутри HTML тега
-            text_before = text[:start]
-            # Подсчитываем открытые и закрытые теги до этой позиции
-            open_tags = text_before.count('<')
-            close_tags = text_before.count('>')
-            # Если количество открытых тегов больше закрытых, мы внутри тега
-            if open_tags > close_tags:
-                return match.group(0)  # Не заменяем
-            # Заменяем на ссылку
-            return f'<a href="{url}">{match.group(0)}</a>'
-        
-        result = re.sub(pattern, replace_func, text, count=1)
-        return result
 
-    @staticmethod
-    def smart_truncate(text: str, length: int = 900) -> str:
-        """Обрезает текст по словам (не режет слова посередине)"""
-        if len(text) <= length:
-            return text
-
-        cut = text[:length]
-        # Сначала ищем точку, восклицательный или вопросительный знак
-        last_dot = max(cut.rfind('.'), cut.rfind('!'), cut.rfind('?'))
-
-        if last_dot > length // 2:
-            return cut[:last_dot + 1]
-
-        # Если знаков препинания нет, обрезаем по последнему пробелу
-        last_space = cut.rfind(' ')
-        if last_space > length * 0.7:  # Если пробел не слишком близко к началу
-            return cut[:last_space] + "..."
+        # 1. Удаляем Markdown ссылки [Text](URL) -> Text
+        # Сначала пробуем сохранить текст ссылки
+        text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
         
-        # Если пробел слишком близко к началу, обрезаем с "..."
-        return cut + "..."
-    
-    @staticmethod
-    def smart_truncate_words(text: str, max_chars: int) -> str:
-        """Обрезает текст по словам (не режет слова посередине)"""
-        if len(text) <= max_chars:
-            return text
+        # 2. Удаляем неудаленные скобки и ссылки
+        text = re.sub(r'\[.*?\]', '', text) # [text]
+        text = re.sub(r'\(http.*?\)', '', text) # (url)
+
+        # 3. Удаляем прямые ссылки (если они не часть текста)
+        # Regex для URL
+        url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+        text = re.sub(url_pattern, '', text)
+
+        # 4. Удаляем спецсимволы в начале/конце строк
+        lines = []
+        for line in text.split('\n'):
+            line = line.strip()
+            # Удаляем повторяющиеся спецсимволы
+            line = re.sub(r'^[\*\_\-\=\#\s]+', '', line) # В начале строки
+            line = re.sub(r'[\*\_\-\=\#\s]+$', '', line) # В конце строки
+            if line:
+                lines.append(line)
         
-        cut = text[:max_chars]
-        last_space = cut.rfind(' ')
-        
-        if last_space > max_chars * 0.7:  # Если пробел не слишком близко к началу
-            return cut[:last_space] + "..."
-        
-        return cut + "..."
+        text = '\n'.join(lines)
 
-    @staticmethod
-    def format_professional_news(
-            title: str,
-            summary: str,
-            source: str,
-            source_url: str,
-            prices: Optional[Dict] = None,
-            fear_greed: Optional[Dict] = None,
-            image_url: Optional[str] = None,
-            ai_data: Optional[Dict] = None,
-            technical_analysis: Optional[Dict] = None,
-            key_points: Optional[List[str]] = None,
-            full_content: Optional[str] = None,
-            footer_template: Optional[str] = None,
-            is_breaking: bool = False
-    ) -> Dict:
+        # 5. Убираем двойные пробелы и множественные переносы
+        text = re.sub(r' +', ' ', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
 
-        # Инициализируем переменные для шаблона (на будущее)
-        prices_text = ""
-        fear_text = ""
-
-        # Заголовок
-        # ✅ НОВОЕ: Используем яркие эмодзи (стандартные, но анимированные в Telegram)
-        # coin_tag убран по требованию пользователя
-        
-        if ai_data:
-            coin = ai_data.get("coin", "Market")
-            if coin and coin != "Market":
-                if not image_url:
-                    image_url = AdvancedMessageFormatter.get_coin_image(coin)
-
-        if not image_url:
-            image_url = AdvancedMessageFormatter.COIN_IMAGES["General"]
-
-        # ✅ НОВОЕ: Улучшенный заголовок с эмодзи
-        title_display = title
-        title_with_link = AdvancedMessageFormatter.insert_random_link(title_display, source_url)
-        
-        # Случайный эмодзи из набора (как в дайджесте)
-        NEWS_EMOJIS = ['🔹', '🔸', '⚡', '✨', '📌', '📍', '💎', '💡', '🔖', '🚩', '🌀', '💠']
-        header_emoji = "🔥" if is_breaking else random.choice(NEWS_EMOJIS)
-        
-        # Добавляем префикс BREAKING если нужно
-        # prefix = "<b>BREAKING:</b> " if is_breaking else ""  # REMOVED request
-        
-        header = f"{header_emoji} <b>{title_with_link}</b>\n\n"
-
-        # ✅ НОВОЕ: Контент (полный текст или summary)
-        content_section = ""
-
-        if full_content:
-            # Если есть full_content, используем выжимку из него
-            from services.content_summarizer import ContentSummarizer
-            try:
-                summary_text = ContentSummarizer.create_extractive_summary(full_content, sentences_count=3)
-                if summary_text:
-                    content_section = AdvancedMessageFormatter.clean_text(summary_text)
-                    content_section = AdvancedMessageFormatter.smart_truncate(content_section, length=600)
-                    content_section += "\n\n"
-            except Exception:
-                pass
-        
-        # Если content_section все еще пустой, используем обычное summary
-        if not content_section:
-            summary_clean = AdvancedMessageFormatter.clean_text(summary)
-            content_section = AdvancedMessageFormatter.smart_truncate(summary_clean, length=600)
-            content_section += "\n\n"
-
-        # Футер
-        footer = ""
-        
-        # 1. Индекс страха (с отступом после него)
-        if fear_greed:
-            # Используем разные эмодзи для разных состояний страха
-            fear_val = fear_greed['value']
-            fear_emoji = "😰" if fear_val < 30 else ("🤑" if fear_val > 70 else "⚖️")
-            footer += f"{fear_emoji} <b>Индекс страха:</b> {fear_val}/100\n\n"
-        else:
-            footer += "\n" 
-
-        if prices:
-            lines = []
-            if "bitcoin" in prices:
-                p = prices['bitcoin']
-                emoji = "🚀" if p.get('change', 0) >= 0 else "🩸"
-                price_line = f"{emoji} BTC: <b>${p['price']:,.0f}</b> ({p['change']:+.2f}%)"
-                prices_text += price_line + "\n"
-                lines.append(price_line)
-            
-            if "ethereum" in prices:
-                p = prices['ethereum']
-                emoji = "🚀" if p.get('change', 0) >= 0 else "🩸"
-                price_line = f"{emoji} ETH: <b>${p['price']:,.0f}</b> ({p['change']:+.2f}%)"
-                prices_text += price_line + "\n"
-                lines.append(price_line)
-            
-            if "solana" in prices:
-                p = prices['solana']
-                emoji = "🚀" if p.get('change', 0) >= 0 else "🩸"
-                price_line = f"{emoji} SOL: <b>${p['price']:.2f}</b> ({p['change']:+.2f}%)"
-                prices_text += price_line + "\n"
-                lines.append(price_line)
-            
-            if lines:
-                footer += "\n".join(lines) + "\n"
-
-        # 4. Кастомный футер (шаблон)
-        if footer_template:
-             # Простая подстановка
-             # Можно расширить до .format(**vars), но пока просто добавляем
-             # Если в шаблоне есть {prices}, {sentiment}, {fear} - можно было бы заменять, 
-             # но сейчас логика выше уже сформировала стандартный футер.
-             # По ТЗ "Настроить шаблон окончания публикации" - вероятно, это подпись канала.
-             footer += f"\n{footer_template}"
-
-        # Сборка сообщения
-        text = f"{header}{content_section}{footer}"
-        
-        # Проверка длины (Telegram limit: 1024 символа)
-        if len(text) > 1024:
-            # Укорачиваем контент
-            max_content_len = 1024 - len(header) - len(footer) - 50
-            if max_content_len > 100:
-                if key_points:
-                    # Укорачиваем ключевые моменты
-                    content_section = "📝 <b>Ключевые моменты:</b>\n"
-                    for point in key_points[:2]:  # Оставляем только 2 пункта
-                        point_clean = AdvancedMessageFormatter.clean_text(point)
-                        point_display = point_clean[:max_content_len // 2] + "..."
-                        content_section += f"• {point_display}\n"
-                    content_section += "\n"
-                else:
-                    content_section = AdvancedMessageFormatter.smart_truncate(
-                        content_section, length=max_content_len
-                    ) + "\n\n"
-                text = f"{header}{content_section}{footer}"
-
-        return {
-            "text": text,
-            "image_url": image_url
-        }
+        return text.strip()
 
 
-class RichMediaMessage:
-    def __init__(self, text: str, image_url: Optional[str] = None, reply_markup=None):
-        self.text = text
-        self.image_url = image_url
-        self.reply_markup = reply_markup
-
-    async def send(self, bot, chat_id: int):
-        try:
-            sent_message = None
-            if self.image_url and ImageExtractor.is_valid_image_url(self.image_url):
-                try:
-                    # Определяем тип изображения: URL или локальный файл
-                    if self.image_url.lower().startswith('http'):
-                        # URL изображение
-                        photo = self.image_url
-                    else:
-                        # Локальный файл
-                        photo = FSInputFile(self.image_url)
-                    
-                    sent_message = await bot.send_photo(
-                        chat_id=chat_id,
-                        photo=photo,
-                        caption=self.text,
-                        parse_mode="HTML",
-                        reply_markup=self.reply_markup
-                    )
-                    logger.info("✅ Фото + текст отправлены")
-                except Exception as e:
-                    logger.warning(f"⚠️ Ошибка фото: {e}. Отправляю текст.")
-                    sent_message = await bot.send_message(
-                        chat_id=chat_id,
-                        text=self.text,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                        reply_markup=self.reply_markup
-                    )
-            else:
-                sent_message = await bot.send_message(
-                    chat_id=chat_id,
-                    text=self.text,
-                    parse_mode="HTML",
-                    disable_web_page_preview=True,
-                    reply_markup=self.reply_markup
-                )
-            return sent_message
-
-        except Exception as e:
-            logger.error(f"❌ Ошибка отправки: {e}")
-            return None
+# Глобальный экземпляр
+message_formatter = AdvancedMessageFormatter()

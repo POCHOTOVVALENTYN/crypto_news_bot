@@ -77,6 +77,20 @@ class BreakingNewsModerator:
         news_url = news_item['url']
         
         try:
+            # Переводим на русский перед модерацией
+            from services.ai_summary import translator
+            
+            # Переводим заголовок
+            translated_title = await translator.translate_text(news_item['title'])
+            if translated_title:
+                news_item['title'] = translated_title
+                
+            # Переводим summary (если есть)
+            if news_item.get('summary'):
+                translated_summary = await translator.translate_text(news_item['summary'])
+                if translated_summary:
+                    news_item['summary'] = translated_summary
+
             # Добавляем в pending_breaking_news
             async with db.conn.execute(
                 """
@@ -101,7 +115,6 @@ class BreakingNewsModerator:
         """Отправить уведомление админу"""
         try:
             # Форматируем сообщение
-            # Форматируем сообщение
             message_text = (
                 f"🚨 <b>BREAKING NEWS МОДЕРАЦИЯ</b>\n"
                 f"➖➖➖➖➖➖➖➖➖➖\n"
@@ -125,12 +138,41 @@ class BreakingNewsModerator:
             )
             keyboard.adjust(2)  # 2 кнопки в ряд
             
-            await bot.send_message(
-                chat_id=admin_id,
-                text=message_text,
-                parse_mode="HTML",
-                reply_markup=keyboard.as_markup()
-            )
+            # Проверяем наличие фото
+            image_url = news_item.get('image_url')
+            
+            try:
+                if image_url:
+                    from aiogram.types import FSInputFile
+                    # Если есть локальный путь к файлу
+                    if not image_url.startswith('http'):
+                         photo = FSInputFile(image_url)
+                    else:
+                         photo = image_url
+                         
+                    await bot.send_photo(
+                        chat_id=admin_id,
+                        photo=photo,
+                        caption=message_text,
+                        parse_mode="HTML",
+                        reply_markup=keyboard.as_markup()
+                    )
+                else:
+                    await bot.send_message(
+                        chat_id=admin_id,
+                        text=message_text,
+                        parse_mode="HTML",
+                        reply_markup=keyboard.as_markup()
+                    )
+            except Exception as send_error:
+                logger.warning(f"⚠️ Не удалось отправить фото админу, шлем текст: {send_error}")
+                # Fallback to text only
+                await bot.send_message(
+                    chat_id=admin_id,
+                    text=message_text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard.as_markup()
+                )
             
             logger.info(f"📨 Уведомление отправлено админу {admin_id} (pending #{pending_id})")
             
@@ -196,10 +238,16 @@ class BreakingNewsModerator:
                 await self._notify_other_admins(admin_id, pending_id, "отклонил")
             
             # Редактируем сообщение с кнопками
-            await callback_query.message.edit_text(
-                callback_query.message.text + f"\n\n{'✅ ОДОБРЕНО' if decision == 'approved' else '❌ ОТКЛОНЕНО'} админом",
-                parse_mode="HTML"
-            )
+            if callback_query.message.photo:
+                await callback_query.message.edit_caption(
+                    caption=callback_query.message.caption + f"\n\n{'✅ ОДОБРЕНО' if decision == 'approved' else '❌ ОТКЛОНЕНО'} админом",
+                    parse_mode="HTML"
+                )
+            else:
+                 await callback_query.message.edit_text(
+                    text=callback_query.message.text + f"\n\n{'✅ ОДОБРЕНО' if decision == 'approved' else '❌ ОТКЛОНЕНО'} админом",
+                    parse_mode="HTML"
+                )
             
         except Exception as e:
             logger.error(f"❌ Ошибка handle_admin_approval: {e}", exc_info=True)
@@ -252,11 +300,12 @@ class BreakingNewsModerator:
         except Exception as e:
             logger.debug(f"Ошибка уведомления других админов: {e}")
     
-    async def auto_publish_expired(self):
+    async def handle_expired_requests(self):
         """
-        Автопубликация breaking news при истечении таймаута
+        Обработка истекших запросов на модерацию
         
-        Вызывается планировщиком каждые 1 минуту
+        Вместо автопубликации теперь помечаем как expired.
+        Вызывается планировщиком каждые 1 минуту.
         """
         try:
             cutoff_time = datetime.now() - timedelta(minutes=self.AUTO_PUBLISH_TIMEOUT_MINUTES)
@@ -276,48 +325,46 @@ class BreakingNewsModerator:
             if not expired_requests:
                 return
             
-            logger.info(f"⏱️ Обнаружено {len(expired_requests)} истекших breaking news для автопубликации")
+            logger.info(f"⏱️ Обнаружено {len(expired_requests)} истекших breaking news. Отмена публикации.")
             
             for request in expired_requests:
-                await self._auto_publish_single(request)
+                await self._expire_request(request)
                 
         except Exception as e:
-            logger.error(f"❌ Ошибка auto_publish_expired: {e}", exc_info=True)
-    
-    async def _auto_publish_single(self, request: Dict):
-        """Автопубликация одной breaking news"""
+            logger.error(f"❌ Ошибка handle_expired_requests: {e}", exc_info=True)
+
+    async def _expire_request(self, request: Dict):
+        """Пометить запрос как истекший и уведомить админов"""
         try:
             pending_id = request['id']
             news_url = request['news_url']
             
-            # Обновляем статус
+            # Обновляем статус на expired
             async with db.conn.execute(
                 """
                 UPDATE pending_breaking_news
-                SET admin_decision = 'approved', auto_published = 1, published_at = ?
+                SET admin_decision = 'expired', last_error = 'Timeout reached'
                 WHERE id = ?
                 """,
-                (datetime.now().isoformat(), pending_id)
+                (pending_id,)
             ) as cursor:
                 await db.conn.commit()
             
-            # Публикуем
-            await self._publish_breaking_news(news_url)
-            
-            logger.warning(f"⚠️ Breaking news автоопубликована (таймаут {self.AUTO_PUBLISH_TIMEOUT_MINUTES} мин): {news_url}")
+            logger.info(f"⏳ Breaking news истекла (таймаут {self.AUTO_PUBLISH_TIMEOUT_MINUTES} мин): {news_url}")
             
             # Уведомляем админов
             for admin_id in ADMIN_IDS:
                 try:
                     await bot.send_message(
                         chat_id=admin_id,
-                        text=f"⚠️ Breaking news автоматически опубликована (ID: {pending_id}) из-за истечения таймаута"
+                        text=f"⏳ <b>Время истекло</b>\nBreaking news ID: {pending_id} <b>ОТМЕНЕНА</b> (нет реакции админов).",
+                        parse_mode="HTML"
                     )
                 except Exception as e:
                     logger.debug(f"Не удалось уведомить админа {admin_id}: {e}")
                     
         except Exception as e:
-            logger.error(f"❌ Ошибка автопубликации: {e}", exc_info=True)
+            logger.error(f"❌ Ошибка _expire_request: {e}", exc_info=True)
 
 
 # Глобальный экземпляр
