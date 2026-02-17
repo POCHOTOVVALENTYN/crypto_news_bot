@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from config import config, USDT_TRC20_ADDRESS
 from database import db
 from loader import bot
+from keyboards.reply import get_premium_menu
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +94,22 @@ class PaymentManager:
                 final_text = f"{admin_text}\n\n📝 Hash: <code>{proof_text}</code>"
                 await bot.send_message(target_admin_id, final_text, parse_mode="HTML", reply_markup=admin_markup)
                 
-            # 3. Notify User
-            await bot.send_message(user_id, "✅ <b>Ваша заявка принята!</b>\nМы проверим оплату и активируем подписку в ближайшее время.", parse_mode="HTML")
+            # 3. Notify User with Reassurance & Support
+            support_username = "Valentin_Pochotov" # Лучше вынести в конфиг, но пока так
+            
+            user_markup = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🆘 Написать в поддержку", url=f"https://t.me/{support_username}")]
+            ])
+            
+            await bot.send_message(
+                user_id, 
+                "✅ <b>Ваша заявка и доказательства приняты!</b>\n\n"
+                "⏳ <b>Ожидание проверки:</b> обычно 10-30 минут.\n"
+                "Мы проверим оплату и активируем подписку в ближайшее время.\n\n"
+                "Если проверка затянулась, нажмите кнопку ниже:", 
+                parse_mode="HTML",
+                reply_markup=user_markup
+            )
             
         except Exception as e:
             logger.error(f"Error handling payment proof: {e}", exc_info=True)
@@ -122,8 +137,10 @@ class PaymentManager:
                     user_id, 
                     "🎉 <b>Оплата подтверждена!</b>\n\n"
                     "Premium доступ активирован на 30 дней.\n"
-                    "Спасибо за поддержку! 🚀", 
-                    parse_mode="HTML"
+                    "Спасибо за поддержку! 🚀\n\n"
+                    "👇 <b>Ваше меню обновлено:</b>", 
+                    parse_mode="HTML",
+                    reply_markup=get_premium_menu()
                 )
             except Exception as e:
                 logger.warning(f"Could not notify user {user_id}: {e}")
