@@ -17,7 +17,7 @@ from database import db
 from services.digest_builder import digest_builder
 
 async def trigger_digest():
-    print("🚀 Запуск принудительного дайджеста (Visual Check)...")
+    print("🚀 Запуск принудительного дайджеста (Final Check buttons)...")
     try:
         # 1. Инициализация БД
         await db.init()

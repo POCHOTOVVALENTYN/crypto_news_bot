@@ -80,16 +80,16 @@ class BreakingNewsModerator:
             # Переводим на русский перед модерацией
             from services.translator import translator
             
-            # Переводим заголовок
-            translated_title = await translator.translate_text(news_item['title'])
-            if translated_title:
-                news_item['title'] = translated_title
-                
-            # Переводим summary (если есть)
-            if news_item.get('summary'):
-                translated_summary = await translator.translate_text(news_item['summary'])
-                if translated_summary:
-                    news_item['summary'] = translated_summary
+            # Переводим на русский перед модерацией
+            from services.translator import translator
+            
+            # Используем async метод translate_news который запускает перевод в executor
+            translation = await translator.translate_news(news_item['title'], news_item.get('summary', ''))
+            
+            if translation:
+                news_item['title'] = translation['ru_title']
+                if translation.get('ru_summary'):
+                    news_item['summary'] = translation['ru_summary']
 
             # Добавляем в pending_breaking_news
             async with db.conn.execute(
@@ -126,17 +126,28 @@ class BreakingNewsModerator:
                 f"❌ <i>Авто-отмена через {self.AUTO_PUBLISH_TIMEOUT_MINUTES} мин (если нет реакции)</i>"
             )
             
-            # Создаем inline кнопки
-            keyboard = InlineKeyboardBuilder()
-            keyboard.button(
-                text="✅ Опубликовать",
-                callback_data=f"breaking_approve:{pending_id}"
-            )
-            keyboard.button(
-                text="❌ Отклонить",
-                callback_data=f"breaking_reject:{pending_id}"
-            )
-            keyboard.adjust(2)  # 2 кнопки в ряд
+            # Создаем inline кнопки (Сырой JSON для API 9.4)
+            # aiogram может вырезать style, поэтому формируем dict вручную
+            
+            try:
+                reply_markup_dict = {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "✅ Опубликовать",
+                                "callback_data": f"breaking_approve:{pending_id}",
+                                "style": "success"
+                            },
+                            {
+                                "text": "❌ Отклонить",
+                                "callback_data": f"breaking_reject:{pending_id}",
+                                "style": "danger"
+                            }
+                        ]
+                    ]
+                }
+            except Exception:
+                reply_markup_dict = None
             
             # Проверяем наличие фото
             image_url = news_item.get('image_url')
@@ -155,14 +166,14 @@ class BreakingNewsModerator:
                         photo=photo,
                         caption=message_text,
                         parse_mode="HTML",
-                        reply_markup=keyboard.as_markup()
+                        reply_markup=reply_markup_dict
                     )
                 else:
                     await bot.send_message(
                         chat_id=admin_id,
                         text=message_text,
                         parse_mode="HTML",
-                        reply_markup=keyboard.as_markup()
+                        reply_markup=reply_markup_dict
                     )
             except Exception as send_error:
                 logger.warning(f"⚠️ Не удалось отправить фото админу, шлем текст: {send_error}")
@@ -171,7 +182,7 @@ class BreakingNewsModerator:
                     chat_id=admin_id,
                     text=message_text,
                     parse_mode="HTML",
-                    reply_markup=keyboard.as_markup()
+                    reply_markup=reply_markup_dict
                 )
             
             logger.info(f"📨 Уведомление отправлено админу {admin_id} (pending #{pending_id})")

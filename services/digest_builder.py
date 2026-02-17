@@ -81,7 +81,7 @@ class DigestBuilder:
             digest_html = await self._format_digest(categorized_news, sentiment_data, len(news_list))
             
             # 4. Публикация
-            message_id = await self._publish_digest(digest_html, len(news_list))
+            message_id = await self._publish_digest(digest_html, news_list)
             
             if message_id:
                 # 5. Сохранить информацию о дайджесте
@@ -314,28 +314,87 @@ class DigestBuilder:
         
         return "\n".join(lines)
     
-    async def _publish_digest(self, digest_html: str, news_count: int) -> Optional[int]:
+    async def _publish_digest(self, digest_html: str, news_list: List[Dict]) -> Optional[int]:
         """Опубликовать дайджест в канал"""
         try:
-            # Inline кнопки
-            keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="💬 Открытый общий чат", url="https://t.me/+514GO2tFjAtkMWRi")
-            keyboard.button(text="📢 Подписаться", url="https://t.me/blexler_invest")
-            keyboard.adjust(1)
+            news_count = len(news_list)
+            # Inline кнопки с цветами (Сырой JSON для API 9.4)
+            # aiogram 3.3.0 может вырезать поле style при сериализации объектов
+            # Поэтому формируем dict вручную
             
+            try:
+                reply_markup_dict = {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "💬 Открытый общий чат",
+                                "url": "https://t.me/+514GO2tFjAtkMWRi",
+                                "style": "primary"
+                            }
+                        ],
+                        [
+                            {
+                                "text": "📢 Подписаться",
+                                "url": "https://t.me/blexler_invest",
+                                "style": "success"
+                            }
+                        ]
+                    ]
+                }
+                
+            except Exception as e:
+                logger.error(f"⚠️ Ошибка создания кнопок: {e}")
+                reply_markup_dict = None
+
             sent_message = await bot.send_message(
                 chat_id=config.telegram_channel_id,
                 text=digest_html,
                 parse_mode="HTML",
                 disable_web_page_preview=True,
-                reply_markup=keyboard.as_markup()
+                reply_markup=reply_markup_dict
             )
             
-            logger.info(f"✅ Дайджест 2.0 опубликован: {news_count} новостей, MsgID: {sent_message.message_id}")
+            logger.info(f"✅ Дайджест 2.0 опубликован (Colored URL Buttons): {news_count} новостей, MsgID: {sent_message.message_id}")
+            
             return sent_message.message_id
             
         except Exception as e:
             logger.error(f"❌ Ошибка публикации дайджеста: {e}", exc_info=True)
+            return None
+            
+    def _generate_audio_script(self, news_list: List[Dict]) -> str:
+        """Создать текст для озвучки"""
+        # Лимит для аудио ~5-7 новостей, чтобы не было слишком длинно
+        top_news = news_list[:5]
+        
+        lines = ["Коротко о главном за последние часы."]
+        
+        for item in top_news:
+            # Убираем лишние символы для чистоты речи
+            title = item['title'].replace('"', '').replace("'", "")
+            lines.append(title + ".")
+            
+        lines.append("Читайте подробности в канале.")
+        return " ".join(lines)
+
+    async def _generate_audio_file(self, text: str) -> Optional[str]:
+        """Генерация аудио файла через gTTS (в executor)"""
+        try:
+            from gtts import gTTS
+            import os
+            
+            filename = f"digest_audio_{datetime.now().strftime('%H%M%S')}.mp3"
+            
+            def _save_audio():
+                tts = gTTS(text=text, lang='ru')
+                tts.save(filename)
+                
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, _save_audio)
+            
+            return filename
+        except Exception as e:
+            logger.error(f"❌ Ошибка генерации аудио (gTTS): {e}")
             return None
     
     async def _save_digest_info(self, message_id: int, news_list: List[Dict]):
@@ -369,3 +428,4 @@ class DigestBuilder:
 
 # Глобальный экземпляр
 digest_builder = DigestBuilder()
+

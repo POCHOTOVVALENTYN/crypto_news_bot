@@ -141,7 +141,7 @@ async def cmd_health(message):
 
 
 # Импорт роутеров
-from handlers import admin_menu, user_start, user_menu, payments, ai_chat, gamification, admin_dashboard, premium_services, premium_purchase, meeting_scheduler, admin_sessions
+from handlers import admin_menu, user_start, user_menu, payments, ai_chat, gamification, admin_dashboard, premium_services, premium_purchase, meeting_scheduler, admin_sessions, callback_redirect
 
 
 # Импорт middleware
@@ -164,6 +164,7 @@ dp.include_router(payments.router)         # Платежи и воронка п
 dp.include_router(ai_chat.router)          # AI-чат (с FSM states)
 dp.include_router(gamification.router)     # Геймификация (лидерборд, XP)
 dp.include_router(user_menu.router)        # Кнопки меню
+dp.include_router(callback_redirect.router)  # ✅ НОВОЕ: Обработка цветных кнопок
 dp.include_router(router)                  # Общие команды (stats, sources, health)
 
 
