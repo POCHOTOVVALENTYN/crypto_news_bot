@@ -32,7 +32,11 @@ class NewsAnalyzer:
 2. Создать цепляющий заголовок на русском (до 10 слов)
 3. Написать краткое описание (2-3 предложения, только суть)
 4. Указать монету (BTC, ETH, SOL, или Market)
-5. Оценить влияние на рынок (High / Medium / Low)
+5. ОЦЕНИТЬ ВЛИЯНИЕ:
+6. category: Bitcoin | Ethereum | DeFi | NFT | Regulation | Market | Altcoins | Security | Other
+7. sentiment_score: от -10 (Total Collapse) до +10 (To The Moon). 0 = Neutral.
+8. why_it_matters: 1 предложение, объясняющее почему это важно для инвестора.
+9. market_impact: High / Medium / Low
 
 КРИТЕРИИ ВАЖНОСТИ:
 - 10 (Critical): Взломы, банкротства, критические регуляторные решения
@@ -58,6 +62,9 @@ class NewsAnalyzer:
     "ru_title": "...",
     "ru_summary": "...",
     "coin": "BTC|ETH|SOL|Market",
+    "category": "Bitcoin|Ethereum|DeFi|NFT|Regulation|Market|Altcoins|Security|Other",
+    "sentiment_score": 7,
+    "why_it_matters": "...",
     "market_impact": "High|Medium|Low"
 }}"""
 

@@ -34,7 +34,11 @@ class NewsDatabase:
                                  added_at           TEXT    DEFAULT CURRENT_TIMESTAMP,
                                  posted_to_telegram BOOLEAN DEFAULT 0,
                                  priority           INTEGER DEFAULT 0,
-                                 telegram_message_id INTEGER DEFAULT NULL
+                                 priority           INTEGER DEFAULT 0,
+                                 telegram_message_id INTEGER DEFAULT NULL,
+                                 category           TEXT,
+                                 sentiment_score    INTEGER,
+                                 why_it_matters     TEXT
                              )
                              """)
             
@@ -65,6 +69,14 @@ class NewsDatabase:
                         await db.execute("ALTER TABLE news ADD COLUMN digest_batch_id INTEGER")
                         await db.commit()
                         logger.info("✅ Добавлена колонка digest_batch_id в таблицу news")
+
+                    # ✅ НОВОЕ: Digest 2.0 fields
+                    if 'category' not in columns:
+                        await db.execute("ALTER TABLE news ADD COLUMN category TEXT")
+                        await db.execute("ALTER TABLE news ADD COLUMN sentiment_score INTEGER")
+                        await db.execute("ALTER TABLE news ADD COLUMN why_it_matters TEXT")
+                        await db.commit()
+                        logger.info("✅ Добавлены колонки Digest 2.0 (category, sentiment, why_it_matters) в таблицу news")
                         
             except Exception as e:
                 # Игнорируем ошибки миграции
@@ -432,7 +444,8 @@ class NewsDatabase:
 
     async def add_news(self, url: str, title: str, summary: str, source: str,
                        published_at: str, image_url: str = None, priority: int = 0,
-                       full_content: str = None, metadata: str = None) -> bool:
+                       full_content: str = None, metadata: str = None,
+                       category: str = None, sentiment_score: int = None, why_it_matters: str = None) -> bool:
         """
         Добавляет новость в БД
         
@@ -446,14 +459,19 @@ class NewsDatabase:
             priority: Приоритет (0-10)
             full_content: Полный текст статьи (новое поле)
             metadata: JSON с дополнительной информацией (Telegram каналы и т.д.)
+            category: Категория новости (Digest 2.0)
+            sentiment_score: Оценка настроения (-10..10)
+            why_it_matters: Объяснение важности
         """
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(
                     """INSERT INTO news
-                           (url, title, summary, full_content, source, published_at, image_url, priority, metadata)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (url, title, summary, full_content, source, published_at, image_url, priority, metadata)
+                           (url, title, summary, full_content, source, published_at, image_url, priority, metadata, 
+                            category, sentiment_score, why_it_matters)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (url, title, summary, full_content, source, published_at, image_url, priority, metadata,
+                     category, sentiment_score, why_it_matters)
                 )
                 await db.commit()
             return True

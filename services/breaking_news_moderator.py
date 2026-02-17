@@ -123,7 +123,7 @@ class BreakingNewsModerator:
                 f"🔗 <b>Источник:</b> {news_item['source']}\n"
                 f"⏳ <b>Время:</b> {news_item['added_at']}\n\n"
                 f"📝 <b>Кратко:</b>\n<i>{news_item.get('summary', 'Нет описания')[:300]}...</i>\n\n"
-                f"⚠️ <i>Автопубликация через {self.AUTO_PUBLISH_TIMEOUT_MINUTES} мин</i>"
+                f"❌ <i>Авто-отмена через {self.AUTO_PUBLISH_TIMEOUT_MINUTES} мин (если нет реакции)</i>"
             )
             
             # Создаем inline кнопки
@@ -347,6 +347,13 @@ class BreakingNewsModerator:
                 WHERE id = ?
                 """,
                 (pending_id,)
+            ) as cursor:
+                await db.conn.commit()
+
+            # ✅ НОВОЕ: Помечаем новость как пропущенную в основной таблице (2 = skipped)
+            async with db.conn.execute(
+                "UPDATE news SET posted_to_telegram = 2 WHERE url = ?",
+                (news_url,)
             ) as cursor:
                 await db.conn.commit()
             

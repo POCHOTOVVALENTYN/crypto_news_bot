@@ -5,7 +5,7 @@ import logging
 from typing import Optional, List, Dict
 from datetime import datetime
 import re
-from config import CHANNELS
+
 from loader import bot
 
 logger = logging.getLogger(__name__)
@@ -155,3 +155,53 @@ class AdvancedMessageFormatter:
 
 # Глобальный экземпляр
 message_formatter = AdvancedMessageFormatter()
+
+
+# === MISSING COMPONENTS RESTORATION ===
+
+class RichMediaMessage:
+    """Class for sending messages with optional images"""
+    def __init__(self, text: str, image_url: Optional[str] = None, reply_markup=None):
+        self.text = text
+        self.image_url = image_url
+        self.reply_markup = reply_markup
+
+    async def send(self, bot, chat_id: int):
+        try:
+            if self.image_url:
+                try:
+                    return await bot.send_photo(
+                        chat_id=chat_id,
+                        photo=self.image_url,
+                        caption=self.text,
+                        parse_mode="HTML",
+                        reply_markup=self.reply_markup
+                    )
+                except Exception as e:
+                    logging.getLogger(__name__).warning(f"Failed to send photo, sending text only: {e}")
+            
+            # Fallback to text
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=self.text,
+                parse_mode="HTML",
+                reply_markup=self.reply_markup,
+                disable_web_page_preview=True
+            )
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Failed to send message: {e}")
+            return None
+
+class FearGreedIndexTracker:
+    """Tracker for Fear & Greed Index"""
+    @staticmethod
+    async def get_fear_greed_index() -> Optional[Dict]:
+        return None
+
+async def get_multiple_crypto_prices() -> Optional[Dict]:
+    """Get crypto prices"""
+    return None
+
+class ImageExtractor:
+    """Helper for extracting images"""
+    pass

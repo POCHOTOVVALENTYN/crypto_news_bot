@@ -129,10 +129,35 @@ class DigestBuilder:
         sentiment_count = 0
         
         for news_item in news_list:
-            # 1. Определить категорию (из БД или heuristic)
+            # 1. Проверяем наличие AI данных (Digest 2.0)
+            if not news_item.get('category') or news_item.get('sentiment_score') is None:
+                logger.info(f"🔄 AI анализ для новости (Digest 2.0): {news_item['title'][:30]}...")
+                try:
+                    # Анализируем полный текст или summary
+                    text_to_analyze = news_item.get('full_content') or news_item.get('summary') or news_item['title']
+                    ai_result = await self.ai_analyzer.analyze_text(text_to_analyze)
+                    
+                    if ai_result:
+                        # Обновляем новость в памяти
+                        news_item['category'] = ai_result.get('category')
+                        news_item['sentiment_score'] = ai_result.get('sentiment_score')
+                        news_item['why_it_matters'] = ai_result.get('why_it_matters')
+                        
+                        # Сохраняем в БД
+                        async with db.conn.execute(
+                            """UPDATE news 
+                               SET category = ?, sentiment_score = ?, why_it_matters = ? 
+                               WHERE url = ?""",
+                            (news_item['category'], news_item['sentiment_score'], news_item['why_it_matters'], news_item['url'])
+                        ) as cursor:
+                            await db.conn.commit()
+                except Exception as e:
+                    logger.error(f"⚠️ Ошибка AI анализа в дайджесте: {e}")
+
+            # 2. Определяем категорию
             category = news_item.get('category')
             
-            # Если категории нет в БД или она кривая, пробуем угадать
+            # Если всё ещё нет категории, пробуем угадать (fallback)
             if not category or category not in self.CATEGORIES:
                 category = await self._guess_category(news_item)
             
@@ -140,14 +165,15 @@ class DigestBuilder:
             if category not in self.CATEGORIES:
                 category = 'Other'
                 
-            # 2. Считаем сентимент
+            # 3. Считаем сентимент
             score = news_item.get('sentiment_score')
             if score is not None:
-                total_sentiment += score
-                sentiment_count += 1
+                try:
+                    total_sentiment += int(score)
+                    sentiment_count += 1
+                except: pass
                 
-            # 3. Дедупликация контента
-            # Для дайджеста просто берем готовый summary или чистим
+            # 4. Дедупликация контента
             if not news_item.get('summary'):
                  news_item['summary'] = news_item['title']
 
@@ -207,24 +233,24 @@ class DigestBuilder:
         norm_score = (avg_sent + 10) / 20  # 0.0 to 1.0
         
         if avg_sent >= 5:
-            mood_text = "Extreme Greed"
+            mood_text = "Жадность (Greed)"
             circles = "🟢🟢🟢🟢🟢"
         elif avg_sent >= 2:
-            mood_text = "Greed"
+            mood_text = "Умеренная жадность"
             circles = "🟢🟢🟢⚪⚪"
         elif avg_sent >= -2:
-            mood_text = "Neutral"
+            mood_text = "Нейтрально"
             circles = "⚪⚪⚪⚪⚪"
         elif avg_sent >= -5:
-            mood_text = "Fear"
+            mood_text = "Страх (Fear)"
             circles = "🔴🔴🔴⚪⚪"
         else:
-            mood_text = "Extreme Fear"
+            mood_text = "Экстремальный страх"
             circles = "🔴🔴🔴🔴🔴"
             
         lines = [
             f"📰 <b>CRYPTO DIGEST • {date_str}</b>",
-            f"[{circles}] Market Mood: <b>{mood_text}</b> ({avg_sent:+.1f})",
+            f"[{circles}] <b>Настроение рынка: {mood_text}</b> ({avg_sent:+.1f}/10)",
             "" 
         ]
         
