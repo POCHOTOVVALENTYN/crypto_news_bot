@@ -288,24 +288,52 @@ class DigestBuilder:
                 
                 lines.append("") # Интервал
             
-        # 3. PRICES HEADER (Mini)
+        # 3. PRICES HEADER (Detailed V3.0)
         try:
             prices = await get_multiple_crypto_prices()
-            if prices and 'bitcoin' in prices:
-                p = prices['bitcoin']
-                changes = p.get('change', 0)
-                arrow = "↗️" if changes >= 0 else "↘️"
-                lines.append(f"💰 <b>BTC:</b> ${p['price']:,.0f} ({changes:+.2f}%) {arrow}")
-        except: pass
-        # 4. SENTIMENT (В конце, без кружочков)
-        avg_sent = sentiment_data['average']
-        if avg_sent >= 5: mood_text = "Жадность (Greed)"
-        elif avg_sent >= 2: mood_text = "Умеренная жадность"
-        elif avg_sent >= -2: mood_text = "Нейтрально"
-        elif avg_sent >= -5: mood_text = "Страх (Fear)"
-        else: mood_text = "Экстремальный страх"
+            if prices:
+                lines.append(f"💰 <b>Цены (24h):</b>")
+                
+                # Порядок: BTC, ETH, SOL
+                for coin in ['bitcoin', 'ethereum', 'solana']:
+                    if coin in prices:
+                        p = prices[coin]
+                        symbol = p['symbol']
+                        price = p['price']
+                        change = p['change']
+                        
+                        # Emoji logic: 🚀 if > 0 else 🩸
+                        emoji_trend = "🚀" if change >= 0 else "🩸"
+                        sign = "+" if change >= 0 else ""
+                        
+                        lines.append(f"{emoji_trend} <b>{symbol}:</b> ${price:,.0f} ({sign}{change:.2f}%)")
+                lines.append("")
+        except Exception as e:
+            logger.error(f"Error adding prices to digest: {e}")
 
-        lines.append(f"🧠 <b>Настроение рынка: {mood_text}</b> ({avg_sent:+.1f}/10)")
+        # 4. SENTIMENT (Fear & Greed Index 0-100)
+        try:
+            fg_data = await FearGreedIndexTracker.get_fear_greed_index()
+            if fg_data:
+                val = fg_data['value']
+                
+                # Emoji logic
+                if val >= 75: face = "🤑" # Extreme Greed
+                elif val >= 55: face = "😊" # Greed
+                elif val >= 45: face = "😐" # Neutral
+                elif val >= 25: face = "😰" # Fear
+                else: face = "😱" # Extreme Fear
+                
+                lines.append(f"{face} <b>Индекс страха:</b> {val}/100")
+            else:
+                # Fallback to internal if external fails
+                avg_sent = sentiment_data['average']
+                if avg_sent >= 0: mood_text = "Позитив"
+                else: mood_text = "Страх"
+                lines.append(f"🧠 <b>Настроение рынка: {mood_text}</b> ({avg_sent:+.1f}/10)")
+                
+        except Exception as e:
+            logger.error(f"Error adding sentiment to digest: {e}")
 
         lines.append("")
         footer = await db.get_setting("footer_template", "")

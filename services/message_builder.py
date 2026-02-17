@@ -196,11 +196,59 @@ class FearGreedIndexTracker:
     """Tracker for Fear & Greed Index"""
     @staticmethod
     async def get_fear_greed_index() -> Optional[Dict]:
-        return None
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get("https://api.alternative.me/fng/", timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        # Returns {"name": "Fear & Greed Index", "data": [{"value": "55", "value_classification": "Greed", ...}]}
+                        if data and 'data' in data and len(data['data']) > 0:
+                            item = data['data'][0]
+                            return {
+                                "value": int(item['value']),
+                                "classification": item['value_classification']
+                            }
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching F&G Index: {e}")
+            return None
 
 async def get_multiple_crypto_prices() -> Optional[Dict]:
-    """Get crypto prices"""
-    return None
+    """Get crypto prices (BTC, ETH, SOL)"""
+    try:
+        import aiohttp
+        # IDs: bitcoin, ethereum, solana
+        url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_24hr_change=true"
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=5) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    # Returns {'bitcoin': {'usd': 68000, 'usd_24h_change': -0.2}, ...}
+                    result = {}
+                    mapping = {
+                        'bitcoin': 'BTC',
+                        'ethereum': 'ETH',
+                        'solana': 'SOL'
+                    }
+                    
+                    for coin_id, symbol in mapping.items():
+                        if coin_id in data:
+                            c = data[coin_id]
+                            result[coin_id] = {
+                                'price': c['usd'],
+                                'change': c['usd_24h_change'],
+                                'symbol': symbol
+                            }
+                    return result
+            # Если 429 или ошибка, пробуем другой источник (резерв)
+            # Пока просто возвращаем None или Mock
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error fetching crypto prices: {e}")
+        return None
 
 class ImageExtractor:
     """Helper for extracting images"""
