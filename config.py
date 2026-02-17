@@ -123,6 +123,9 @@ class Settings(BaseSettings):
     premium_price_full: int = Field(500, description="Полная цена Premium в звёздах")
     premium_price_discount: int = Field(400, description="Скидочная цена Premium в звёздах")
     premium_duration_days: int = Field(30, description="Длительность подписки в днях")
+    
+    # === MANUAL PAYMENT (USDT TRC-20) ===
+    usdt_trc20_address: str = Field("TCVnnLA1yGubEUTVj2CDMhR2ESQ8QUy435", description="Адрес для ручной оплаты Premium")
 
     # === LOGGING ===
     log_level: str = Field("INFO", description="Logging level")
@@ -258,5 +261,6 @@ SOURCE_CHANNELS = config.get_source_channels_list()  # ⚠️ ИСПРАВЛЕН
 PARSE_INTERVAL = config.parse_interval
 FILTER_ENABLED = config.filter_enabled
 LOG_LEVEL = config.log_level
+USDT_TRC20_ADDRESS = config.usdt_trc20_address
 
 TG_PHONE_NUMBER = os.getenv("TG_PHONE_NUMBER")

@@ -13,7 +13,8 @@ from database import db
 from loader import bot
 from config import PREMIUM_PRICES, ADMIN_NAMES
 from services.relay_manager import relay_manager
-from utils.states import PriceNegotiationState
+from services.payment_manager import PaymentManager
+from utils.states import PriceNegotiationState, PaymentProofState
 from keyboards.reply import get_premium_menu, get_free_menu
 
 router = Router()
@@ -39,8 +40,9 @@ async def premium_offer_base(message: Message, state: FSMContext):
     price_base = PREMIUM_PRICES['base']
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"💵 USDT (TRC-20) - {price_base['usd']}$", callback_data="pay_manual_usdt")],
         [InlineKeyboardButton(
-            text=f"💳 Оплатить {price_base['usd']}$ ({price_base['stars']:,}⭐)",
+            text=f"⭐️ Telegram Stars ({price_base['stars']:,})",
             callback_data=f"pay_premium_base_{price_base['stars']}"
         )],
         [InlineKeyboardButton(
@@ -586,6 +588,72 @@ async def premium_delete_message(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Ошибка удаления сообщения: {e}")
         await callback.answer()
+
+# === MANUAL USDT PAYMENT HANDLERS ===
+
+@router.callback_query(F.data == "pay_manual_usdt")
+async def manual_pay_start(callback: CallbackQuery):
+    """Start manual payment flow"""
+    await callback.answer()
+    await PaymentManager.send_invoice(callback.message.chat.id)
+
+@router.callback_query(F.data == "pay_manual_paid")
+async def manual_pay_paid_click(callback: CallbackQuery, state: FSMContext):
+    """User clicked 'I Paid'"""
+    await callback.answer()
+    await callback.message.answer(
+        "📝 <b>Подтверждение оплаты</b>\n\n"
+        "Пожалуйста, отправьте в ответном сообщении:\n"
+        "1. <b>Hash транзакции (TxID)</b> (текстом)\n"
+        "ИЛИ\n"
+        "2. <b>Скриншот оплаты</b>\n\n"
+        "👇 Жду подтверждение...",
+        parse_mode="HTML"
+    )
+    await state.set_state(PaymentProofState.waiting_for_proof)
+
+@router.callback_query(F.data == "pay_back")
+async def manual_pay_back(callback: CallbackQuery, state: FSMContext):
+    """Back button"""
+    await callback.message.delete()
+    # Optionally trigger main offer again if needed, or just close
+
+@router.message(PaymentProofState.waiting_for_proof)
+async def manual_pay_process_proof(message: Message, state: FSMContext):
+    """Handle proof submission"""
+    if message.photo:
+        await PaymentManager.process_proof(message.from_user.id, message, is_photo=True)
+    elif message.text:
+        await PaymentManager.process_proof(message.from_user.id, message.text, is_photo=False)
+    else:
+        await message.answer("❌ Пожалуйста, отправьте текст (Hash) или фото (Скриншот).")
+        return
+
+    await state.clear()
+
+# === ADMIN MANUAL PAYMENT ACTIONS ===
+
+@router.callback_query(F.data.startswith("admin_pay_approve:"))
+async def admin_approve_payment(callback: CallbackQuery):
+    order_id = int(callback.data.split(":")[1])
+    success, msg = await PaymentManager.approve_order(order_id, callback.from_user.id)
+    
+    if success:
+        await callback.message.edit_reply_markup(reply_markup=None) # Remove buttons
+        await callback.message.reply(f"✅ {msg}")
+    else:
+        await callback.answer(msg, show_alert=True)
+
+@router.callback_query(F.data.startswith("admin_pay_reject:"))
+async def admin_reject_payment(callback: CallbackQuery):
+    order_id = int(callback.data.split(":")[1])
+    success, msg = await PaymentManager.reject_order(order_id, callback.from_user.id)
+    
+    if success:
+        await callback.message.edit_reply_markup(reply_markup=None) # Remove buttons
+        await callback.message.reply(f"❌ {msg}")
+    else:
+        await callback.answer(msg, show_alert=True)
 
 
 logger.info("✅ Premium Purchase handlers зарегистрированы")

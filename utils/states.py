@@ -36,3 +36,6 @@ class PriceNegotiationState(StatesGroup):
     admin_setting_price = State()  # Админ устанавливает цену
     admin_entering_price = State()  # Админ вводит сумму (новое)
     awaiting_custom_payment = State()  # Ожидание оплаты кастомной суммы
+
+class PaymentProofState(StatesGroup):
+    waiting_for_proof = State()  # Ожидание скриншота/хеша оплаты

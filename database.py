@@ -351,6 +351,24 @@ class NewsDatabase:
             except Exception as e:
                 logger.debug(f"⚠️ Миграция геймификации: {e}")
             
+            # ✅ НОВОЕ: Таблица ручных заказов на оплату (USDT)
+            await db.execute("""
+                             CREATE TABLE IF NOT EXISTS payment_orders
+                             (
+                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                 user_id INTEGER NOT NULL,
+                                 amount REAL NOT NULL,
+                                 currency TEXT DEFAULT 'USDT',
+                                 status TEXT DEFAULT 'pending',  -- 'pending' / 'approved' / 'rejected'
+                                 proof_file_id TEXT,
+                                 proof_text TEXT,
+                                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                 admin_id INTEGER,
+                                 FOREIGN KEY (user_id) REFERENCES users(user_id)
+                             )
+                             """)
+            
             await db.commit()
 
     async def close(self):
@@ -746,6 +764,55 @@ class NewsDatabase:
             logger.error(f"❌ Ошибка завершения платежа {payment_uuid}: {e}", exc_info=True)
             raise
     
+    # === MANUAL PAYMENT ORDERS (USDT) ===
+    
+    async def create_payment_order(self, user_id: int, amount: float, currency: str = 'USDT', 
+                                   proof_file_id: str = None, proof_text: str = None) -> int:
+        """Создает заявку на ручную оплату"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    """INSERT INTO payment_orders 
+                       (user_id, amount, currency, status, proof_file_id, proof_text)
+                       VALUES (?, ?, ?, 'pending', ?, ?)""",
+                    (user_id, amount, currency, proof_file_id, proof_text)
+                )
+                await db.commit()
+                cursor = await db.execute("SELECT last_insert_rowid()")
+                row = await cursor.fetchone()
+                return row[0]
+        except Exception as e:
+            logger.error(f"❌ Error creating payment order: {e}", exc_info=True)
+            return None
+
+    async def get_payment_order(self, order_id: int) -> Optional[Dict]:
+        """Получает заявку по ID"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute("SELECT * FROM payment_orders WHERE id = ?", (order_id,)) as cursor:
+                    row = await cursor.fetchone()
+                    return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"❌ Error getting payment order {order_id}: {e}")
+            return None
+
+    async def update_payment_order_status(self, order_id: int, status: str, admin_id: int = None) -> bool:
+        """Обновляет статус заявки (approved/rejected)"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    """UPDATE payment_orders 
+                       SET status = ?, admin_id = ?, updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""",
+                    (status, admin_id, order_id)
+                )
+                await db.commit()
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error updating payment order {order_id}: {e}")
+            return False
+
     async def get_sales_analytics(self) -> Dict:
         """Возвращает подробную аналитику продаж"""
         async with aiosqlite.connect(self.db_path) as db:
