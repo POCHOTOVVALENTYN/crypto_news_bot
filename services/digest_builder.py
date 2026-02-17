@@ -225,7 +225,7 @@ class DigestBuilder:
         # 1. HEADER (Без сентимента)
         date_str = datetime.now().strftime("%d.%m.%Y")
         lines = [
-            f"📰 <b>CRYPTO DIGEST • {date_str}</b>",
+            f"<b>Сводка новостей</b>",
             "" 
         ]
         
@@ -308,7 +308,6 @@ class DigestBuilder:
         lines.append(f"🧠 <b>Настроение рынка: {mood_text}</b> ({avg_sent:+.1f}/10)")
 
         lines.append("")
-        lines.append(f"📊 <i>Всего новостей: {news_count}</i>")
         footer = await db.get_setting("footer_template", "")
         if footer:
             lines.append(footer)
