@@ -34,7 +34,6 @@ class NewsDatabase:
                                  added_at           TEXT    DEFAULT CURRENT_TIMESTAMP,
                                  posted_to_telegram BOOLEAN DEFAULT 0,
                                  priority           INTEGER DEFAULT 0,
-                                 priority           INTEGER DEFAULT 0,
                                  telegram_message_id INTEGER DEFAULT NULL,
                                  category           TEXT,
                                  sentiment_score    INTEGER,
@@ -82,22 +81,7 @@ class NewsDatabase:
                 # Игнорируем ошибки миграции
                 logger.debug(f"⚠️ Миграция: {e}")
             
-            # ✅ МИГРАЦИЯ: Добавляем колонки для модерации Stories
-            try:
-                async with db.execute("PRAGMA table_info(user_activities)") as cursor:
-                    columns = [row[1] for row in await cursor.fetchall()]
-                    
-                    if 'verification_status' not in columns:
-                        await db.execute("ALTER TABLE user_activities ADD COLUMN verification_status TEXT")
-                        await db.execute("ALTER TABLE user_activities ADD COLUMN ai_confidence REAL")
-                        await db.execute("ALTER TABLE user_activities ADD COLUMN reviewed_by INTEGER")
-                        await db.execute("ALTER TABLE user_activities ADD COLUMN reviewed_at DATETIME")
-                        await db.execute("ALTER TABLE user_activities ADD COLUMN local_file_path TEXT")
-                        await db.execute("ALTER TABLE user_activities ADD COLUMN image_hash TEXT")
-                        await db.commit()
-                        logger.info("✅ Добавлены колонки для модерации Stories")
-            except Exception as e:
-                logger.debug(f"⚠️ Миграция модерации: {e}")
+
             
             # Добавляем индекс для быстрого поиска по приоритету
             await db.execute("""
@@ -105,11 +89,7 @@ class NewsDatabase:
                              ON news(priority DESC, posted_to_telegram, id ASC)
                              """)
             
-            # Индекс для быстрого поиска проверок на модерации
-            await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_pending_stories 
-                ON user_activities(verification_status, created_at DESC)
-            """)
+
             
             # Таблица настроек (key-value store)
             await db.execute("""
@@ -225,7 +205,33 @@ class NewsDatabase:
                                  FOREIGN KEY (user_id) REFERENCES users (user_id)
                              )
                              """)
+            await db.commit()
+
+
             
+            # ✅ МИГРАЦИЯ: Добавляем колонки для модерации Stories (после создания таблицы)
+            try:
+                async with db.execute("PRAGMA table_info(user_activities)") as cursor:
+                    columns = [row[1] for row in await cursor.fetchall()]
+                    
+                    if 'verification_status' not in columns:
+                        await db.execute("ALTER TABLE user_activities ADD COLUMN verification_status TEXT")
+                        await db.execute("ALTER TABLE user_activities ADD COLUMN ai_confidence REAL")
+                        await db.execute("ALTER TABLE user_activities ADD COLUMN reviewed_by INTEGER")
+                        await db.execute("ALTER TABLE user_activities ADD COLUMN reviewed_at DATETIME")
+                        await db.execute("ALTER TABLE user_activities ADD COLUMN local_file_path TEXT")
+                        await db.execute("ALTER TABLE user_activities ADD COLUMN image_hash TEXT")
+                        await db.commit()
+                        logger.info("✅ Добавлены колонки для модерации Stories")
+            except Exception as e:
+                logger.debug(f"⚠️ Миграция модерации: {e}")
+
+            # Индекс для быстрого поиска проверок на модерации
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pending_stories 
+                ON user_activities(verification_status, created_at DESC)
+            """)
+
             # === ТАБЛИЦЫ ДЛЯ RELAY MODE (ПОДДЕРЖКА И КОНСУЛЬТАЦИИ) ===
             
             # Таблица сессий поддержки

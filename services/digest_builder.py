@@ -103,7 +103,7 @@ class DigestBuilder:
                 AND digest_batch_id IS NULL
                 AND priority < 9
                 ORDER BY priority DESC, added_at DESC
-                LIMIT 20
+                LIMIT 7
                 """,
                 ()
             ) as cursor:
@@ -222,35 +222,10 @@ class DigestBuilder:
     async def _format_digest(self, categorized_news: Dict[str, List[Dict]], sentiment_data: Dict, news_count: int) -> str:
         """Форматировать дайджест 2.0 в HTML"""
         
-        # 1. HEADER & SENTIMENT METER
+        # 1. HEADER (Без сентимента)
         date_str = datetime.now().strftime("%d.%m.%Y")
-        avg_sent = sentiment_data['average']
-        
-        # Visual Sentiment Meter [-10...10] -> [0...10] scale approx for squares
-        # Mapped to 5 circles: 🔴🔴⚪⚪🟢
-        
-        # Normalize -10..10 to 0..1
-        norm_score = (avg_sent + 10) / 20  # 0.0 to 1.0
-        
-        if avg_sent >= 5:
-            mood_text = "Жадность (Greed)"
-            circles = "🟢🟢🟢🟢🟢"
-        elif avg_sent >= 2:
-            mood_text = "Умеренная жадность"
-            circles = "🟢🟢🟢⚪⚪"
-        elif avg_sent >= -2:
-            mood_text = "Нейтрально"
-            circles = "⚪⚪⚪⚪⚪"
-        elif avg_sent >= -5:
-            mood_text = "Страх (Fear)"
-            circles = "🔴🔴🔴⚪⚪"
-        else:
-            mood_text = "Экстремальный страх"
-            circles = "🔴🔴🔴🔴🔴"
-            
         lines = [
             f"📰 <b>CRYPTO DIGEST • {date_str}</b>",
-            f"[{circles}] <b>Настроение рынка: {mood_text}</b> ({avg_sent:+.1f}/10)",
             "" 
         ]
         
@@ -322,8 +297,16 @@ class DigestBuilder:
                 arrow = "↗️" if changes >= 0 else "↘️"
                 lines.append(f"💰 <b>BTC:</b> ${p['price']:,.0f} ({changes:+.2f}%) {arrow}")
         except: pass
-        
-        # 4. FOOTER
+        # 4. SENTIMENT (В конце, без кружочков)
+        avg_sent = sentiment_data['average']
+        if avg_sent >= 5: mood_text = "Жадность (Greed)"
+        elif avg_sent >= 2: mood_text = "Умеренная жадность"
+        elif avg_sent >= -2: mood_text = "Нейтрально"
+        elif avg_sent >= -5: mood_text = "Страх (Fear)"
+        else: mood_text = "Экстремальный страх"
+
+        lines.append(f"🧠 <b>Настроение рынка: {mood_text}</b> ({avg_sent:+.1f}/10)")
+
         lines.append("")
         lines.append(f"📊 <i>Всего новостей: {news_count}</i>")
         footer = await db.get_setting("footer_template", "")
@@ -337,8 +320,8 @@ class DigestBuilder:
         try:
             # Inline кнопки
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="💬 Обсудить в чате", url="https://t.me/+514GO2tFjAtkMWRi")
-            keyboard.button(text="🔥 Premium Аналитика", url="https://t.me/blexler_support_bot")
+            keyboard.button(text="💬 Открытый общий чат", url="https://t.me/+514GO2tFjAtkMWRi")
+            keyboard.button(text="📢 Подписаться", url="https://t.me/blexler_invest")
             keyboard.adjust(1)
             
             sent_message = await bot.send_message(
