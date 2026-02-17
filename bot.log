@@ -15660,3 +15660,386 @@ AttributeError: 'NewsDatabase' object has no attribute 'count_user_activity'
 2026-02-17 10:25:11,556 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:26:11 EET)" (scheduled at 2026-02-17 10:25:11.549622+02:00)
 2026-02-17 10:25:11,558 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:25:41 EET)" executed successfully
 2026-02-17 10:25:11,558 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:26:11 EET)" executed successfully
+2026-02-17 10:25:41,554 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:26:11 EET)" (scheduled at 2026-02-17 10:25:41.549463+02:00)
+2026-02-17 10:25:41,559 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:26:11 EET)" executed successfully
+2026-02-17 10:26:11,502 - apscheduler.executors.default - INFO - Running job "RSS Parsing (trigger: interval[0:10:00], next run at: 2026-02-17 10:36:11 EET)" (scheduled at 2026-02-17 10:26:11.500010+02:00)
+2026-02-17 10:26:11,504 - services.scheduler_tasks - INFO - 🔍 Парсер: ищу свежие новости...
+🔄 Fetching: Forklog...
+2026-02-17 10:26:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:26:41 EET)" (scheduled at 2026-02-17 10:26:11.549463+02:00)
+2026-02-17 10:26:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:27:11 EET)" (scheduled at 2026-02-17 10:26:11.549622+02:00)
+2026-02-17 10:26:11,551 - apscheduler.executors.default - INFO - Running job "Health Monitor (trigger: interval[0:10:00], next run at: 2026-02-17 10:36:11 EET)" (scheduled at 2026-02-17 10:26:11.549883+02:00)
+2026-02-17 10:26:11,552 - apscheduler.executors.default - INFO - Job "Health Monitor (trigger: interval[0:10:00], next run at: 2026-02-17 10:36:11 EET)" executed successfully
+2026-02-17 10:26:11,552 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:26:41 EET)" executed successfully
+2026-02-17 10:26:11,553 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:27:11 EET)" executed successfully
+2026-02-17 10:26:11,554 - apscheduler.executors.default - INFO - Running job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 10:31:11 EET)" (scheduled at 2026-02-17 10:26:11.553899+02:00)
+2026-02-17 10:26:11,554 - apscheduler.executors.default - INFO - Running job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 10:31:11 EET)" (scheduled at 2026-02-17 10:26:11.554000+02:00)
+2026-02-17 10:26:11,555 - apscheduler.executors.default - INFO - Job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 10:31:11 EET)" executed successfully
+2026-02-17 10:26:11,555 - apscheduler.executors.default - INFO - Job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 10:31:11 EET)" executed successfully
+✅ Found 20 entries from Forklog
+🔄 Fetching: Coinspot...
+2026-02-17 10:26:41,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:27:11 EET)" (scheduled at 2026-02-17 10:26:41.549463+02:00)
+2026-02-17 10:26:41,558 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:27:11 EET)" executed successfully
+⏱️ Timeout (20s): https://coinspot.io/feed/
+⚠️ No entries from Coinspot
+🔄 Fetching: CoinDesk...
+✅ Found 20 entries from CoinDesk
+🔄 Fetching: Cointelegraph...
+✅ Found 20 entries from Cointelegraph
+🔄 Fetching: Decrypt...
+✅ Found 20 entries from Decrypt
+🔄 Fetching: The Block...
+✅ Found 20 entries from The Block
+2026-02-17 10:26:48,009 - services.scheduler_tasks - INFO - 📥 RSS: найдено 89, добавлено 1 (0 высокоприоритетных), отфильтровано 30 (дубликаты: 58, старые: 30, валидация: 0, приоритет 0: 0)
+2026-02-17 10:26:48,010 - apscheduler.executors.default - INFO - Job "RSS Parsing (trigger: interval[0:10:00], next run at: 2026-02-17 10:36:11 EET)" executed successfully
+2026-02-17 10:27:11,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:27:41 EET)" (scheduled at 2026-02-17 10:27:11.549463+02:00)
+2026-02-17 10:27:11,554 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:28:11 EET)" (scheduled at 2026-02-17 10:27:11.549622+02:00)
+2026-02-17 10:27:11,559 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:27:41 EET)" executed successfully
+2026-02-17 10:27:11,559 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:28:11 EET)" executed successfully
+2026-02-17 10:27:41,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:28:11 EET)" (scheduled at 2026-02-17 10:27:41.549463+02:00)
+2026-02-17 10:27:41,562 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:28:11 EET)" executed successfully
+2026-02-17 10:28:11,555 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:28:41 EET)" (scheduled at 2026-02-17 10:28:11.549463+02:00)
+2026-02-17 10:28:11,558 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:29:11 EET)" (scheduled at 2026-02-17 10:28:11.549622+02:00)
+2026-02-17 10:28:11,563 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:28:41 EET)" executed successfully
+2026-02-17 10:28:11,564 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:29:11 EET)" executed successfully
+2026-02-17 10:28:41,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:29:11 EET)" (scheduled at 2026-02-17 10:28:41.549463+02:00)
+2026-02-17 10:28:41,555 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:29:11 EET)" executed successfully
+2026-02-17 10:29:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:29:41 EET)" (scheduled at 2026-02-17 10:29:11.549463+02:00)
+2026-02-17 10:29:11,555 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:30:11 EET)" (scheduled at 2026-02-17 10:29:11.549622+02:00)
+2026-02-17 10:29:11,557 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:29:41 EET)" executed successfully
+2026-02-17 10:29:11,558 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:30:11 EET)" executed successfully
+2026-02-17 10:29:41,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:30:11 EET)" (scheduled at 2026-02-17 10:29:41.549463+02:00)
+2026-02-17 10:29:41,558 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:30:11 EET)" executed successfully
+2026-02-17 10:30:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:30:41 EET)" (scheduled at 2026-02-17 10:30:11.549463+02:00)
+2026-02-17 10:30:11,552 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:31:11 EET)" (scheduled at 2026-02-17 10:30:11.549622+02:00)
+2026-02-17 10:30:11,553 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:30:41 EET)" executed successfully
+2026-02-17 10:30:11,553 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:31:11 EET)" executed successfully
+2026-02-17 10:30:41,556 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:31:11 EET)" (scheduled at 2026-02-17 10:30:41.549463+02:00)
+2026-02-17 10:30:41,561 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:31:11 EET)" executed successfully
+2026-02-17 10:31:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:31:41 EET)" (scheduled at 2026-02-17 10:31:11.549463+02:00)
+2026-02-17 10:31:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:32:11 EET)" (scheduled at 2026-02-17 10:31:11.549622+02:00)
+2026-02-17 10:31:11,555 - apscheduler.executors.default - INFO - Running job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 10:36:11 EET)" (scheduled at 2026-02-17 10:31:11.553899+02:00)
+2026-02-17 10:31:11,555 - apscheduler.executors.default - INFO - Running job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 10:36:11 EET)" (scheduled at 2026-02-17 10:31:11.554000+02:00)
+2026-02-17 10:31:11,557 - apscheduler.executors.default - INFO - Job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 10:36:11 EET)" executed successfully
+2026-02-17 10:31:11,558 - apscheduler.executors.default - INFO - Job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 10:36:11 EET)" executed successfully
+2026-02-17 10:31:11,558 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:31:41 EET)" executed successfully
+2026-02-17 10:31:11,558 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:32:11 EET)" executed successfully
+2026-02-17 10:31:41,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:32:11 EET)" (scheduled at 2026-02-17 10:31:41.549463+02:00)
+2026-02-17 10:31:41,558 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:32:11 EET)" executed successfully
+2026-02-17 10:32:11,550 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:32:41 EET)" (scheduled at 2026-02-17 10:32:11.549463+02:00)
+2026-02-17 10:32:11,552 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:33:11 EET)" (scheduled at 2026-02-17 10:32:11.549622+02:00)
+2026-02-17 10:32:11,554 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:32:41 EET)" executed successfully
+2026-02-17 10:32:11,554 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:33:11 EET)" executed successfully
+2026-02-17 10:32:41,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:33:11 EET)" (scheduled at 2026-02-17 10:32:41.549463+02:00)
+2026-02-17 10:32:41,556 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:33:11 EET)" executed successfully
+2026-02-17 10:33:11,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:33:41 EET)" (scheduled at 2026-02-17 10:33:11.549463+02:00)
+2026-02-17 10:33:11,554 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:34:11 EET)" (scheduled at 2026-02-17 10:33:11.549622+02:00)
+2026-02-17 10:33:11,556 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:33:41 EET)" executed successfully
+2026-02-17 10:33:11,556 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:34:11 EET)" executed successfully
+2026-02-17 10:33:41,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:34:11 EET)" (scheduled at 2026-02-17 10:33:41.549463+02:00)
+2026-02-17 10:33:41,567 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:34:11 EET)" executed successfully
+2026-02-17 10:34:11,554 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:34:41 EET)" (scheduled at 2026-02-17 10:34:11.549463+02:00)
+2026-02-17 10:34:11,557 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:35:11 EET)" (scheduled at 2026-02-17 10:34:11.549622+02:00)
+2026-02-17 10:34:11,560 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:34:41 EET)" executed successfully
+2026-02-17 10:34:11,561 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:35:11 EET)" executed successfully
+2026-02-17 10:34:41,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:35:11 EET)" (scheduled at 2026-02-17 10:34:41.549463+02:00)
+2026-02-17 10:34:41,556 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:35:11 EET)" executed successfully
+2026-02-17 10:35:11,555 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:35:41 EET)" (scheduled at 2026-02-17 10:35:11.549463+02:00)
+2026-02-17 10:35:11,559 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:36:11 EET)" (scheduled at 2026-02-17 10:35:11.549622+02:00)
+2026-02-17 10:35:11,562 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:35:41 EET)" executed successfully
+2026-02-17 10:35:11,563 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:36:11 EET)" executed successfully
+2026-02-17 10:35:41,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:36:11 EET)" (scheduled at 2026-02-17 10:35:41.549463+02:00)
+2026-02-17 10:35:41,555 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:36:11 EET)" executed successfully
+2026-02-17 10:35:54,274 - aiogram.dispatcher - ERROR - Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-02-17 10:35:54,275 - aiogram.dispatcher - WARNING - Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8239612286)
+2026-02-17 10:36:05,757 - aiogram.dispatcher - INFO - Connection established (tryings = 1, bot id = 8239612286)
+2026-02-17 10:36:11,503 - apscheduler.executors.default - INFO - Running job "RSS Parsing (trigger: interval[0:10:00], next run at: 2026-02-17 10:46:11 EET)" (scheduled at 2026-02-17 10:36:11.500010+02:00)
+2026-02-17 10:36:11,504 - services.scheduler_tasks - INFO - 🔍 Парсер: ищу свежие новости...
+🔄 Fetching: Forklog...
+2026-02-17 10:36:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:36:41 EET)" (scheduled at 2026-02-17 10:36:11.549463+02:00)
+2026-02-17 10:36:11,554 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:37:11 EET)" (scheduled at 2026-02-17 10:36:11.549622+02:00)
+2026-02-17 10:36:11,555 - apscheduler.executors.default - INFO - Running job "Health Monitor (trigger: interval[0:10:00], next run at: 2026-02-17 10:46:11 EET)" (scheduled at 2026-02-17 10:36:11.549883+02:00)
+2026-02-17 10:36:11,555 - apscheduler.executors.default - INFO - Job "Health Monitor (trigger: interval[0:10:00], next run at: 2026-02-17 10:46:11 EET)" executed successfully
+2026-02-17 10:36:11,557 - apscheduler.executors.default - INFO - Running job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 10:41:11 EET)" (scheduled at 2026-02-17 10:36:11.553899+02:00)
+2026-02-17 10:36:11,557 - apscheduler.executors.default - INFO - Running job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 10:41:11 EET)" (scheduled at 2026-02-17 10:36:11.554000+02:00)
+2026-02-17 10:36:11,558 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:36:41 EET)" executed successfully
+2026-02-17 10:36:11,559 - apscheduler.executors.default - INFO - Job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 10:41:11 EET)" executed successfully
+2026-02-17 10:36:11,559 - apscheduler.executors.default - INFO - Job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 10:41:11 EET)" executed successfully
+2026-02-17 10:36:11,560 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:37:11 EET)" executed successfully
+2026-02-17 10:36:41,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:37:11 EET)" (scheduled at 2026-02-17 10:36:41.549463+02:00)
+2026-02-17 10:36:41,555 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:37:11 EET)" executed successfully
+⏱️ Timeout (20s): https://forklog.com/feed/
+⚠️ No entries from Forklog
+🔄 Fetching: Coinspot...
+2026-02-17 10:38:00,885 - apscheduler.executors.default - WARNING - Run time of job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:38:11 EET)" was missed by 0:00:19.335159
+2026-02-17 10:38:00,888 - apscheduler.executors.default - WARNING - Run time of job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:38:11 EET)" was missed by 0:00:49.338993
+⏱️ Timeout (20s): https://coinspot.io/feed/
+⚠️ No entries from Coinspot
+🔄 Fetching: CoinDesk...
+✅ Found 20 entries from CoinDesk
+🔄 Fetching: Cointelegraph...
+2026-02-17 10:38:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:38:41 EET)" (scheduled at 2026-02-17 10:38:11.549463+02:00)
+2026-02-17 10:38:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:39:11 EET)" (scheduled at 2026-02-17 10:38:11.549622+02:00)
+2026-02-17 10:38:11,556 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:38:41 EET)" executed successfully
+2026-02-17 10:38:11,556 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:39:11 EET)" executed successfully
+✅ Found 20 entries from Cointelegraph
+🔄 Fetching: Decrypt...
+✅ Found 20 entries from Decrypt
+🔄 Fetching: The Block...
+✅ Found 20 entries from The Block
+2026-02-17 10:38:36,253 - services.scheduler_tasks - INFO - 📥 RSS: найдено 73, добавлено 1 (0 высокоприоритетных), отфильтровано 23 (дубликаты: 49, старые: 23, валидация: 0, приоритет 0: 0)
+2026-02-17 10:38:36,254 - apscheduler.executors.default - INFO - Job "RSS Parsing (trigger: interval[0:10:00], next run at: 2026-02-17 10:46:11 EET)" executed successfully
+2026-02-17 10:38:41,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:39:11 EET)" (scheduled at 2026-02-17 10:38:41.549463+02:00)
+2026-02-17 10:38:41,558 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:39:11 EET)" executed successfully
+2026-02-17 10:39:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:39:41 EET)" (scheduled at 2026-02-17 10:39:11.549463+02:00)
+2026-02-17 10:39:11,555 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:40:11 EET)" (scheduled at 2026-02-17 10:39:11.549622+02:00)
+2026-02-17 10:39:11,557 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:39:41 EET)" executed successfully
+2026-02-17 10:39:11,557 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:40:11 EET)" executed successfully
+2026-02-17 10:39:41,554 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:40:11 EET)" (scheduled at 2026-02-17 10:39:41.549463+02:00)
+2026-02-17 10:39:41,557 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:40:11 EET)" executed successfully
+2026-02-17 10:40:11,562 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:40:41 EET)" (scheduled at 2026-02-17 10:40:11.549463+02:00)
+2026-02-17 10:40:11,565 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:41:11 EET)" (scheduled at 2026-02-17 10:40:11.549622+02:00)
+2026-02-17 10:40:11,574 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:40:41 EET)" executed successfully
+2026-02-17 10:40:11,588 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:41:11 EET)" executed successfully
+2026-02-17 10:40:41,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:41:11 EET)" (scheduled at 2026-02-17 10:40:41.549463+02:00)
+2026-02-17 10:40:41,556 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:41:11 EET)" executed successfully
+2026-02-17 10:41:11,556 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:41:41 EET)" (scheduled at 2026-02-17 10:41:11.549463+02:00)
+2026-02-17 10:41:11,558 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:42:11 EET)" (scheduled at 2026-02-17 10:41:11.549622+02:00)
+2026-02-17 10:41:11,559 - apscheduler.executors.default - INFO - Running job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 10:46:11 EET)" (scheduled at 2026-02-17 10:41:11.553899+02:00)
+2026-02-17 10:41:11,560 - apscheduler.executors.default - INFO - Running job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 10:46:11 EET)" (scheduled at 2026-02-17 10:41:11.554000+02:00)
+2026-02-17 10:41:11,563 - apscheduler.executors.default - INFO - Job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 10:46:11 EET)" executed successfully
+2026-02-17 10:41:11,563 - apscheduler.executors.default - INFO - Job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 10:46:11 EET)" executed successfully
+2026-02-17 10:41:11,563 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:41:41 EET)" executed successfully
+2026-02-17 10:41:11,563 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:42:11 EET)" executed successfully
+2026-02-17 10:41:41,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:42:11 EET)" (scheduled at 2026-02-17 10:41:41.549463+02:00)
+2026-02-17 10:41:41,554 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:42:11 EET)" executed successfully
+2026-02-17 10:42:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:42:41 EET)" (scheduled at 2026-02-17 10:42:11.549463+02:00)
+2026-02-17 10:42:11,554 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:43:11 EET)" (scheduled at 2026-02-17 10:42:11.549622+02:00)
+2026-02-17 10:42:11,556 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:42:41 EET)" executed successfully
+2026-02-17 10:42:11,557 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:43:11 EET)" executed successfully
+2026-02-17 10:42:41,550 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:43:11 EET)" (scheduled at 2026-02-17 10:42:41.549463+02:00)
+2026-02-17 10:42:41,554 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:43:11 EET)" executed successfully
+2026-02-17 10:43:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:43:41 EET)" (scheduled at 2026-02-17 10:43:11.549463+02:00)
+2026-02-17 10:43:11,555 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:44:11 EET)" (scheduled at 2026-02-17 10:43:11.549622+02:00)
+2026-02-17 10:43:11,557 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:43:41 EET)" executed successfully
+2026-02-17 10:43:11,557 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:44:11 EET)" executed successfully
+2026-02-17 10:43:41,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:44:11 EET)" (scheduled at 2026-02-17 10:43:41.549463+02:00)
+2026-02-17 10:43:41,553 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:44:11 EET)" executed successfully
+2026-02-17 10:44:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:44:41 EET)" (scheduled at 2026-02-17 10:44:11.549463+02:00)
+2026-02-17 10:44:11,556 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:45:11 EET)" (scheduled at 2026-02-17 10:44:11.549622+02:00)
+2026-02-17 10:44:11,559 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:44:41 EET)" executed successfully
+2026-02-17 10:44:11,559 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:45:11 EET)" executed successfully
+2026-02-17 10:44:41,561 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:45:11 EET)" (scheduled at 2026-02-17 10:44:41.549463+02:00)
+2026-02-17 10:44:41,562 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:45:11 EET)" executed successfully
+2026-02-17 10:45:11,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:45:41 EET)" (scheduled at 2026-02-17 10:45:11.549463+02:00)
+2026-02-17 10:45:11,554 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:46:11 EET)" (scheduled at 2026-02-17 10:45:11.549622+02:00)
+2026-02-17 10:45:11,557 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:45:41 EET)" executed successfully
+2026-02-17 10:45:11,557 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:46:11 EET)" executed successfully
+2026-02-17 10:45:41,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:46:11 EET)" (scheduled at 2026-02-17 10:45:41.549463+02:00)
+2026-02-17 10:45:41,556 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:46:11 EET)" executed successfully
+2026-02-17 10:46:11,505 - apscheduler.executors.default - INFO - Running job "RSS Parsing (trigger: interval[0:10:00], next run at: 2026-02-17 10:56:11 EET)" (scheduled at 2026-02-17 10:46:11.500010+02:00)
+2026-02-17 10:46:11,507 - services.scheduler_tasks - INFO - 🔍 Парсер: ищу свежие новости...
+🔄 Fetching: Forklog...
+2026-02-17 10:46:11,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:46:41 EET)" (scheduled at 2026-02-17 10:46:11.549463+02:00)
+2026-02-17 10:46:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:47:11 EET)" (scheduled at 2026-02-17 10:46:11.549622+02:00)
+2026-02-17 10:46:11,554 - apscheduler.executors.default - INFO - Running job "Health Monitor (trigger: interval[0:10:00], next run at: 2026-02-17 10:56:11 EET)" (scheduled at 2026-02-17 10:46:11.549883+02:00)
+2026-02-17 10:46:11,555 - apscheduler.executors.default - INFO - Job "Health Monitor (trigger: interval[0:10:00], next run at: 2026-02-17 10:56:11 EET)" executed successfully
+2026-02-17 10:46:11,560 - apscheduler.executors.default - INFO - Running job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 10:51:11 EET)" (scheduled at 2026-02-17 10:46:11.553899+02:00)
+2026-02-17 10:46:11,561 - apscheduler.executors.default - INFO - Running job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 10:51:11 EET)" (scheduled at 2026-02-17 10:46:11.554000+02:00)
+2026-02-17 10:46:11,562 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:46:41 EET)" executed successfully
+2026-02-17 10:46:11,563 - apscheduler.executors.default - INFO - Job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 10:51:11 EET)" executed successfully
+2026-02-17 10:46:11,563 - apscheduler.executors.default - INFO - Job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 10:51:11 EET)" executed successfully
+2026-02-17 10:46:11,563 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:47:11 EET)" executed successfully
+2026-02-17 10:46:41,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:47:11 EET)" (scheduled at 2026-02-17 10:46:41.549463+02:00)
+2026-02-17 10:46:41,558 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:47:11 EET)" executed successfully
+⏱️ Timeout (20s): https://forklog.com/feed/
+⚠️ No entries from Forklog
+🔄 Fetching: Coinspot...
+2026-02-17 10:47:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:47:41 EET)" (scheduled at 2026-02-17 10:47:11.549463+02:00)
+2026-02-17 10:47:11,556 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:48:11 EET)" (scheduled at 2026-02-17 10:47:11.549622+02:00)
+2026-02-17 10:47:11,559 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:47:41 EET)" executed successfully
+2026-02-17 10:47:11,559 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:48:11 EET)" executed successfully
+⏱️ Timeout (20s): https://coinspot.io/feed/
+⚠️ No entries from Coinspot
+🔄 Fetching: CoinDesk...
+✅ Found 20 entries from CoinDesk
+🔄 Fetching: Cointelegraph...
+✅ Found 20 entries from Cointelegraph
+🔄 Fetching: Decrypt...
+✅ Found 20 entries from Decrypt
+🔄 Fetching: The Block...
+2026-02-17 10:47:41,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:48:11 EET)" (scheduled at 2026-02-17 10:47:41.549463+02:00)
+2026-02-17 10:47:41,554 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:48:11 EET)" executed successfully
+✅ Found 20 entries from The Block
+2026-02-17 10:47:42,780 - services.scheduler_tasks - INFO - 📥 RSS: найдено 73, добавлено 0 (0 высокоприоритетных), отфильтровано 23 (дубликаты: 50, старые: 23, валидация: 0, приоритет 0: 0)
+2026-02-17 10:47:42,780 - apscheduler.executors.default - INFO - Job "RSS Parsing (trigger: interval[0:10:00], next run at: 2026-02-17 10:56:11 EET)" executed successfully
+2026-02-17 10:48:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:48:41 EET)" (scheduled at 2026-02-17 10:48:11.549463+02:00)
+2026-02-17 10:48:11,556 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:49:11 EET)" (scheduled at 2026-02-17 10:48:11.549622+02:00)
+2026-02-17 10:48:11,559 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:48:41 EET)" executed successfully
+2026-02-17 10:48:11,559 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:49:11 EET)" executed successfully
+2026-02-17 10:48:41,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:49:11 EET)" (scheduled at 2026-02-17 10:48:41.549463+02:00)
+2026-02-17 10:48:41,559 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:49:11 EET)" executed successfully
+2026-02-17 10:49:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:49:41 EET)" (scheduled at 2026-02-17 10:49:11.549463+02:00)
+2026-02-17 10:49:11,556 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:50:11 EET)" (scheduled at 2026-02-17 10:49:11.549622+02:00)
+2026-02-17 10:49:11,559 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:49:41 EET)" executed successfully
+2026-02-17 10:49:11,560 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:50:11 EET)" executed successfully
+2026-02-17 10:49:41,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:50:11 EET)" (scheduled at 2026-02-17 10:49:41.549463+02:00)
+2026-02-17 10:49:41,555 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:50:11 EET)" executed successfully
+2026-02-17 10:50:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:50:41 EET)" (scheduled at 2026-02-17 10:50:11.549463+02:00)
+2026-02-17 10:50:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:51:11 EET)" (scheduled at 2026-02-17 10:50:11.549622+02:00)
+2026-02-17 10:50:11,555 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:50:41 EET)" executed successfully
+2026-02-17 10:50:11,555 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:51:11 EET)" executed successfully
+2026-02-17 10:50:41,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:51:11 EET)" (scheduled at 2026-02-17 10:50:41.549463+02:00)
+2026-02-17 10:50:41,554 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:51:11 EET)" executed successfully
+2026-02-17 10:51:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:51:41 EET)" (scheduled at 2026-02-17 10:51:11.549463+02:00)
+2026-02-17 10:51:11,556 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:52:11 EET)" (scheduled at 2026-02-17 10:51:11.549622+02:00)
+2026-02-17 10:51:11,558 - apscheduler.executors.default - INFO - Running job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 10:56:11 EET)" (scheduled at 2026-02-17 10:51:11.553899+02:00)
+2026-02-17 10:51:11,559 - apscheduler.executors.default - INFO - Running job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 10:56:11 EET)" (scheduled at 2026-02-17 10:51:11.554000+02:00)
+2026-02-17 10:51:11,560 - apscheduler.executors.default - INFO - Job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 10:56:11 EET)" executed successfully
+2026-02-17 10:51:11,560 - apscheduler.executors.default - INFO - Job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 10:56:11 EET)" executed successfully
+2026-02-17 10:51:11,561 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:51:41 EET)" executed successfully
+2026-02-17 10:51:11,561 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:52:11 EET)" executed successfully
+2026-02-17 10:51:41,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:52:11 EET)" (scheduled at 2026-02-17 10:51:41.549463+02:00)
+2026-02-17 10:51:41,556 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:52:11 EET)" executed successfully
+2026-02-17 10:52:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:52:41 EET)" (scheduled at 2026-02-17 10:52:11.549463+02:00)
+2026-02-17 10:52:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:53:11 EET)" (scheduled at 2026-02-17 10:52:11.549622+02:00)
+2026-02-17 10:52:11,555 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:52:41 EET)" executed successfully
+2026-02-17 10:52:11,555 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:53:11 EET)" executed successfully
+2026-02-17 10:52:41,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:53:11 EET)" (scheduled at 2026-02-17 10:52:41.549463+02:00)
+2026-02-17 10:52:41,558 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:53:11 EET)" executed successfully
+2026-02-17 10:53:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:53:41 EET)" (scheduled at 2026-02-17 10:53:11.549463+02:00)
+2026-02-17 10:53:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:54:11 EET)" (scheduled at 2026-02-17 10:53:11.549622+02:00)
+2026-02-17 10:53:11,555 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:53:41 EET)" executed successfully
+2026-02-17 10:53:11,556 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:54:11 EET)" executed successfully
+2026-02-17 10:53:41,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:54:11 EET)" (scheduled at 2026-02-17 10:53:41.549463+02:00)
+2026-02-17 10:53:41,556 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:54:11 EET)" executed successfully
+2026-02-17 10:54:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:54:41 EET)" (scheduled at 2026-02-17 10:54:11.549463+02:00)
+2026-02-17 10:54:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:55:11 EET)" (scheduled at 2026-02-17 10:54:11.549622+02:00)
+2026-02-17 10:54:11,555 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:54:41 EET)" executed successfully
+2026-02-17 10:54:11,556 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:55:11 EET)" executed successfully
+2026-02-17 10:54:41,560 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:55:11 EET)" (scheduled at 2026-02-17 10:54:41.549463+02:00)
+2026-02-17 10:54:41,565 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:55:11 EET)" executed successfully
+2026-02-17 10:55:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:55:41 EET)" (scheduled at 2026-02-17 10:55:11.549463+02:00)
+2026-02-17 10:55:11,556 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:56:11 EET)" (scheduled at 2026-02-17 10:55:11.549622+02:00)
+2026-02-17 10:55:11,558 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:55:41 EET)" executed successfully
+2026-02-17 10:55:11,559 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:56:11 EET)" executed successfully
+2026-02-17 10:55:41,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:56:11 EET)" (scheduled at 2026-02-17 10:55:41.549463+02:00)
+2026-02-17 10:55:41,562 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:56:11 EET)" executed successfully
+2026-02-17 10:56:11,502 - apscheduler.executors.default - INFO - Running job "RSS Parsing (trigger: interval[0:10:00], next run at: 2026-02-17 11:06:11 EET)" (scheduled at 2026-02-17 10:56:11.500010+02:00)
+2026-02-17 10:56:11,504 - services.scheduler_tasks - INFO - 🔍 Парсер: ищу свежие новости...
+🔄 Fetching: Forklog...
+2026-02-17 10:56:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:56:41 EET)" (scheduled at 2026-02-17 10:56:11.549463+02:00)
+2026-02-17 10:56:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:57:11 EET)" (scheduled at 2026-02-17 10:56:11.549622+02:00)
+2026-02-17 10:56:11,551 - apscheduler.executors.default - INFO - Running job "Health Monitor (trigger: interval[0:10:00], next run at: 2026-02-17 11:06:11 EET)" (scheduled at 2026-02-17 10:56:11.549883+02:00)
+2026-02-17 10:56:11,552 - apscheduler.executors.default - INFO - Job "Health Monitor (trigger: interval[0:10:00], next run at: 2026-02-17 11:06:11 EET)" executed successfully
+2026-02-17 10:56:11,553 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:56:41 EET)" executed successfully
+2026-02-17 10:56:11,554 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:57:11 EET)" executed successfully
+2026-02-17 10:56:11,554 - apscheduler.executors.default - INFO - Running job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 11:01:11 EET)" (scheduled at 2026-02-17 10:56:11.553899+02:00)
+2026-02-17 10:56:11,554 - apscheduler.executors.default - INFO - Running job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 11:01:11 EET)" (scheduled at 2026-02-17 10:56:11.554000+02:00)
+2026-02-17 10:56:11,555 - apscheduler.executors.default - INFO - Job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 11:01:11 EET)" executed successfully
+2026-02-17 10:56:11,555 - apscheduler.executors.default - INFO - Job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 11:01:11 EET)" executed successfully
+2026-02-17 10:56:41,550 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:57:11 EET)" (scheduled at 2026-02-17 10:56:41.549463+02:00)
+2026-02-17 10:56:41,553 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:57:11 EET)" executed successfully
+⏱️ Timeout (20s): https://forklog.com/feed/
+⚠️ No entries from Forklog
+🔄 Fetching: Coinspot...
+2026-02-17 10:57:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:57:41 EET)" (scheduled at 2026-02-17 10:57:11.549463+02:00)
+2026-02-17 10:57:11,556 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:58:11 EET)" (scheduled at 2026-02-17 10:57:11.549622+02:00)
+2026-02-17 10:57:11,559 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:57:41 EET)" executed successfully
+2026-02-17 10:57:11,560 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:58:11 EET)" executed successfully
+⏱️ Timeout (20s): https://coinspot.io/feed/
+⚠️ No entries from Coinspot
+🔄 Fetching: CoinDesk...
+✅ Found 20 entries from CoinDesk
+🔄 Fetching: Cointelegraph...
+✅ Found 20 entries from Cointelegraph
+🔄 Fetching: Decrypt...
+✅ Found 20 entries from Decrypt
+🔄 Fetching: The Block...
+✅ Found 20 entries from The Block
+2026-02-17 10:57:29,560 - services.scheduler_tasks - INFO - 📥 RSS: найдено 72, добавлено 0 (0 высокоприоритетных), отфильтровано 23 (дубликаты: 49, старые: 23, валидация: 0, приоритет 0: 0)
+2026-02-17 10:57:29,561 - apscheduler.executors.default - INFO - Job "RSS Parsing (trigger: interval[0:10:00], next run at: 2026-02-17 11:06:11 EET)" executed successfully
+2026-02-17 10:57:41,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:58:11 EET)" (scheduled at 2026-02-17 10:57:41.549463+02:00)
+2026-02-17 10:57:41,554 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:58:11 EET)" executed successfully
+2026-02-17 10:58:11,550 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:58:41 EET)" (scheduled at 2026-02-17 10:58:11.549463+02:00)
+2026-02-17 10:58:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:59:11 EET)" (scheduled at 2026-02-17 10:58:11.549622+02:00)
+2026-02-17 10:58:11,554 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:58:41 EET)" executed successfully
+2026-02-17 10:58:11,555 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 10:59:11 EET)" executed successfully
+2026-02-17 10:58:41,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:59:11 EET)" (scheduled at 2026-02-17 10:58:41.549463+02:00)
+2026-02-17 10:58:41,558 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:59:11 EET)" executed successfully
+2026-02-17 10:59:11,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:59:41 EET)" (scheduled at 2026-02-17 10:59:11.549463+02:00)
+2026-02-17 10:59:11,554 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:00:11 EET)" (scheduled at 2026-02-17 10:59:11.549622+02:00)
+2026-02-17 10:59:11,556 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 10:59:41 EET)" executed successfully
+2026-02-17 10:59:11,557 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:00:11 EET)" executed successfully
+2026-02-17 10:59:41,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:00:11 EET)" (scheduled at 2026-02-17 10:59:41.549463+02:00)
+2026-02-17 10:59:41,554 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:00:11 EET)" executed successfully
+2026-02-17 11:00:11,550 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:00:41 EET)" (scheduled at 2026-02-17 11:00:11.549463+02:00)
+2026-02-17 11:00:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:01:11 EET)" (scheduled at 2026-02-17 11:00:11.549622+02:00)
+2026-02-17 11:00:11,552 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:00:41 EET)" executed successfully
+2026-02-17 11:00:11,552 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:01:11 EET)" executed successfully
+2026-02-17 11:00:41,553 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:01:11 EET)" (scheduled at 2026-02-17 11:00:41.549463+02:00)
+2026-02-17 11:00:41,558 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:01:11 EET)" executed successfully
+2026-02-17 11:01:11,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:01:41 EET)" (scheduled at 2026-02-17 11:01:11.549463+02:00)
+2026-02-17 11:01:11,555 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:02:11 EET)" (scheduled at 2026-02-17 11:01:11.549622+02:00)
+2026-02-17 11:01:11,556 - apscheduler.executors.default - INFO - Running job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 11:06:11 EET)" (scheduled at 2026-02-17 11:01:11.553899+02:00)
+2026-02-17 11:01:11,557 - apscheduler.executors.default - INFO - Running job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 11:06:11 EET)" (scheduled at 2026-02-17 11:01:11.554000+02:00)
+2026-02-17 11:01:11,558 - apscheduler.executors.default - INFO - Job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 11:06:11 EET)" executed successfully
+2026-02-17 11:01:11,559 - apscheduler.executors.default - INFO - Job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 11:06:11 EET)" executed successfully
+2026-02-17 11:01:11,559 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:01:41 EET)" executed successfully
+2026-02-17 11:01:11,559 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:02:11 EET)" executed successfully
+2026-02-17 11:01:41,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:02:11 EET)" (scheduled at 2026-02-17 11:01:41.549463+02:00)
+2026-02-17 11:01:41,556 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:02:11 EET)" executed successfully
+2026-02-17 11:02:11,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:02:41 EET)" (scheduled at 2026-02-17 11:02:11.549463+02:00)
+2026-02-17 11:02:11,554 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:03:11 EET)" (scheduled at 2026-02-17 11:02:11.549622+02:00)
+2026-02-17 11:02:11,556 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:02:41 EET)" executed successfully
+2026-02-17 11:02:11,556 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:03:11 EET)" executed successfully
+2026-02-17 11:02:41,554 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:03:11 EET)" (scheduled at 2026-02-17 11:02:41.549463+02:00)
+2026-02-17 11:02:41,558 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:03:11 EET)" executed successfully
+2026-02-17 11:03:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:03:41 EET)" (scheduled at 2026-02-17 11:03:11.549463+02:00)
+2026-02-17 11:03:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:04:11 EET)" (scheduled at 2026-02-17 11:03:11.549622+02:00)
+2026-02-17 11:03:11,555 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:03:41 EET)" executed successfully
+2026-02-17 11:03:11,555 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:04:11 EET)" executed successfully
+2026-02-17 11:03:41,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:04:11 EET)" (scheduled at 2026-02-17 11:03:41.549463+02:00)
+2026-02-17 11:03:41,554 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:04:11 EET)" executed successfully
+2026-02-17 11:04:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:04:41 EET)" (scheduled at 2026-02-17 11:04:11.549463+02:00)
+2026-02-17 11:04:11,553 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:05:11 EET)" (scheduled at 2026-02-17 11:04:11.549622+02:00)
+2026-02-17 11:04:11,555 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:04:41 EET)" executed successfully
+2026-02-17 11:04:11,555 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:05:11 EET)" executed successfully
+2026-02-17 11:04:41,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:05:11 EET)" (scheduled at 2026-02-17 11:04:41.549463+02:00)
+2026-02-17 11:04:41,554 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:05:11 EET)" executed successfully
+2026-02-17 11:05:11,552 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:05:41 EET)" (scheduled at 2026-02-17 11:05:11.549463+02:00)
+2026-02-17 11:05:11,555 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:06:11 EET)" (scheduled at 2026-02-17 11:05:11.549622+02:00)
+2026-02-17 11:05:11,557 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:05:41 EET)" executed successfully
+2026-02-17 11:05:11,558 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:06:11 EET)" executed successfully
+2026-02-17 11:05:41,550 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:06:11 EET)" (scheduled at 2026-02-17 11:05:41.549463+02:00)
+2026-02-17 11:05:41,554 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:06:11 EET)" executed successfully
+2026-02-17 11:06:11,502 - apscheduler.executors.default - INFO - Running job "RSS Parsing (trigger: interval[0:10:00], next run at: 2026-02-17 11:16:11 EET)" (scheduled at 2026-02-17 11:06:11.500010+02:00)
+2026-02-17 11:06:11,504 - services.scheduler_tasks - INFO - 🔍 Парсер: ищу свежие новости...
+🔄 Fetching: Forklog...
+2026-02-17 11:06:11,551 - apscheduler.executors.default - INFO - Running job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:06:41 EET)" (scheduled at 2026-02-17 11:06:11.549463+02:00)
+2026-02-17 11:06:11,552 - apscheduler.executors.default - INFO - Running job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:07:11 EET)" (scheduled at 2026-02-17 11:06:11.549622+02:00)
+2026-02-17 11:06:11,553 - apscheduler.executors.default - INFO - Running job "Health Monitor (trigger: interval[0:10:00], next run at: 2026-02-17 11:16:11 EET)" (scheduled at 2026-02-17 11:06:11.549883+02:00)
+2026-02-17 11:06:11,553 - apscheduler.executors.default - INFO - Job "Health Monitor (trigger: interval[0:10:00], next run at: 2026-02-17 11:16:11 EET)" executed successfully
+2026-02-17 11:06:11,554 - apscheduler.executors.default - INFO - Running job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 11:11:11 EET)" (scheduled at 2026-02-17 11:06:11.553899+02:00)
+2026-02-17 11:06:11,554 - apscheduler.executors.default - INFO - Running job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 11:11:11 EET)" (scheduled at 2026-02-17 11:06:11.554000+02:00)
+2026-02-17 11:06:11,555 - apscheduler.executors.default - INFO - Job "Breaking News Monitor (trigger: interval[0:00:30], next run at: 2026-02-17 11:06:41 EET)" executed successfully
+2026-02-17 11:06:11,555 - apscheduler.executors.default - INFO - Job "Breaking News Auto-publish (trigger: interval[0:01:00], next run at: 2026-02-17 11:07:11 EET)" executed successfully
+2026-02-17 11:06:11,555 - apscheduler.executors.default - INFO - Job "Support Escalation Checker (trigger: interval[0:05:00], next run at: 2026-02-17 11:11:11 EET)" executed successfully
+2026-02-17 11:06:11,555 - apscheduler.executors.default - INFO - Job "Meeting Reminders Sender (trigger: interval[0:05:00], next run at: 2026-02-17 11:11:11 EET)" executed successfully
+2026-02-17 11:06:34,665 - aiogram.dispatcher - WARNING - Received SIGTERM signal
+2026-02-17 11:06:34,668 - aiogram.dispatcher - INFO - Polling stopped for bot @Blexler_bot id=8239612286 - 'Blexler_bot'
+2026-02-17 11:06:34,670 - aiogram.dispatcher - INFO - Polling stopped
+2026-02-17 11:06:34,927 - __main__ - INFO - 🧹 Очистка ресурсов...
+2026-02-17 11:06:34,931 - utils.process_control - INFO - 🔓 PID файл удален
+2026-02-17 11:06:34,931 - __main__ - INFO - 🧹 Очистка ресурсов...
+2026-02-17 11:06:34,931 - __main__ - INFO - ✅ Планировщик остановлен
+2026-02-17 11:06:34,934 - apscheduler.scheduler - INFO - Scheduler has been shut down
+2026-02-17 11:06:34,938 - apscheduler.executors.default - INFO - Job "RSS Parsing (trigger: interval[0:10:00], next run at: 2026-02-17 11:16:11 EET)" executed successfully
+2026-02-17 11:06:34,948 - __main__ - INFO - ✅ БД соединение закрыто
+2026-02-17 11:06:34,954 - telethon.network.mtprotosender - INFO - Not disconnecting (already have no connection)
+2026-02-17 11:06:34,955 - telethon.network.mtprotosender - INFO - Not disconnecting (already have no connection)
+2026-02-17 11:06:34,962 - __main__ - INFO - ✅ Bot session закрыт
+2026-02-17 11:06:34,963 - __main__ - INFO - ============================================================
+2026-02-17 11:06:34,963 - __main__ - INFO - 👋 БОТ ОСТАНОВЛЕН
+2026-02-17 11:06:34,963 - __main__ - INFO - ============================================================
+2026-02-17 11:06:35,414 - asyncio - ERROR - Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x126ce6550>
