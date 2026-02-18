@@ -89,12 +89,17 @@ async def send_consultation_offer(message: Message, consultation_type: str):
 
     # Формируем callback data с ценой и типом (Stateless)
     # pay_consult:{short_code}:{stars}
-    callback_data = f"pay_consult:{config_data['short_code']}:{price_info['stars']}"
+    callback_data_stars = f"pay_consult:{config_data['short_code']}:{price_info['stars']}"
+    callback_data_usdt = f"pay_consult_usdt:{config_data['short_code']}:{price_info['usd']}"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text=f"💳 Оплатить {price_info['usd']}$ ({price_info['stars']:,}⭐)",
-            callback_data=callback_data
+            text=f"💵 Оплатить {price_info['usd']}$ (USDT)",
+            callback_data=callback_data_usdt
+        )],
+        [InlineKeyboardButton(
+            text=f"⭐️ Оплатить Stars ({price_info['stars']:,})",
+            callback_data=callback_data_stars
         )],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_consultation")]
     ])
@@ -227,6 +232,36 @@ async def premium_signals(message: Message):
 
 
 # === ОБРАБОТКА ОПЛАТЫ (STATELESS) ===
+
+@router.callback_query(F.data.startswith("pay_consult_usdt:"))
+async def process_consultation_usdt_payment(callback: CallbackQuery):
+    """
+    Обработка оплаты консультации USDT.
+    Format: pay_consult_usdt:{short_code}:{usd_price}
+    """
+    try:
+        parts = callback.data.split(":")
+        short_code = parts[1]
+        amount_usd = float(parts[2])
+    except (IndexError, ValueError):
+        await callback.answer("❌ Ошибка данных кнопки", show_alert=True)
+        return
+
+    await callback.answer()
+    
+    # Determined service type
+    service_type = 'premium'
+    if short_code == 'wallet':
+        service_type = 'wallet_review'
+    elif short_code == 'vip':
+        service_type = 'vip_consultation'
+        
+    await PaymentManager.send_invoice(
+        callback.message.chat.id, 
+        custom_price=amount_usd, 
+        service_type=service_type
+    )
+
 
 @router.callback_query(F.data.startswith("pay_consult:"))
 async def process_stateless_payment(callback: CallbackQuery):

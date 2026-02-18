@@ -521,16 +521,33 @@ async def premium_delete_message(callback: CallbackQuery, state: FSMContext):
 
 # === MANUAL USDT PAYMENT HANDLERS ===
 
+# === MANUAL USDT PAYMENT HANDLERS ===
+
 @router.callback_query(F.data == "pay_manual_usdt")
 async def manual_pay_start(callback: CallbackQuery):
     """Start manual payment flow"""
     await callback.answer()
-    await PaymentManager.send_invoice(callback.message.chat.id)
+    await PaymentManager.send_invoice(callback.message.chat.id, service_type='premium')
 
-@router.callback_query(F.data == "pay_manual_paid")
+@router.callback_query(F.data.startswith("pay_manual_paid:"))
 async def manual_pay_paid_click(callback: CallbackQuery, state: FSMContext):
     """User clicked 'I Paid'"""
     await callback.answer()
+    
+    # Parse callback data: pay_manual_paid:{price}:{service_type}
+    try:
+        parts = callback.data.split(":")
+        price = float(parts[1])
+        service_type = parts[2] if len(parts) > 2 else 'premium'
+        
+        # Save to FSM
+        await state.update_data(payment_amount=price, payment_service_type=service_type)
+        
+    except (IndexError, ValueError):
+        logger.error(f"Invalid callback data: {callback.data}")
+        # Fallback defaults
+        await state.update_data(payment_amount=800.0, payment_service_type='premium')
+
     await callback.message.answer(
         "📝 <b>Подтверждение оплаты</b>\n\n"
         "Пожалуйста, отправьте в ответном сообщении:\n"
@@ -551,10 +568,14 @@ async def manual_pay_back(callback: CallbackQuery, state: FSMContext):
 @router.message(PaymentProofState.waiting_for_proof)
 async def manual_pay_process_proof(message: Message, state: FSMContext):
     """Handle proof submission"""
+    data = await state.get_data()
+    amount = data.get('payment_amount')
+    service_type = data.get('payment_service_type', 'premium')
+    
     if message.photo:
-        await PaymentManager.process_proof(message.from_user.id, message, is_photo=True)
+        await PaymentManager.process_proof(message.from_user.id, message, is_photo=True, amount=amount, service_type=service_type)
     elif message.text:
-        await PaymentManager.process_proof(message.from_user.id, message.text, is_photo=False)
+        await PaymentManager.process_proof(message.from_user.id, message.text, is_photo=False, amount=amount, service_type=service_type)
     else:
         await message.answer("❌ Пожалуйста, отправьте текст (Hash) или фото (Скриншот).")
         return

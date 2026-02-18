@@ -369,6 +369,18 @@ class NewsDatabase:
                              )
                              """)
             
+            # ✅ МИГРАЦИЯ: Добавляем service_type в payment_orders (USDT Services)
+            try:
+                async with db.execute("PRAGMA table_info(payment_orders)") as cursor:
+                    columns = [row[1] for row in await cursor.fetchall()]
+                    
+                    if 'service_type' not in columns:
+                        await db.execute("ALTER TABLE payment_orders ADD COLUMN service_type TEXT DEFAULT 'premium'")
+                        await db.commit()
+                        logger.info("✅ Добавлена колонка service_type в таблицу payment_orders")
+            except Exception as e:
+                logger.debug(f"⚠️ Миграция payment_orders: {e}")
+
             await db.commit()
 
     async def close(self):
@@ -767,15 +779,15 @@ class NewsDatabase:
     # === MANUAL PAYMENT ORDERS (USDT) ===
     
     async def create_payment_order(self, user_id: int, amount: float, currency: str = 'USDT', 
-                                   proof_file_id: str = None, proof_text: str = None) -> int:
+                                   proof_file_id: str = None, proof_text: str = None, service_type: str = 'premium') -> int:
         """Создает заявку на ручную оплату"""
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(
                     """INSERT INTO payment_orders 
-                       (user_id, amount, currency, status, proof_file_id, proof_text)
-                       VALUES (?, ?, ?, 'pending', ?, ?)""",
-                    (user_id, amount, currency, proof_file_id, proof_text)
+                       (user_id, amount, currency, status, proof_file_id, proof_text, service_type)
+                       VALUES (?, ?, ?, 'pending', ?, ?, ?)""",
+                    (user_id, amount, currency, proof_file_id, proof_text, service_type)
                 )
                 await db.commit()
                 cursor = await db.execute("SELECT last_insert_rowid()")
