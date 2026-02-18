@@ -90,6 +90,69 @@ class AdvancedMessageFormatter:
             
         return final_text
 
+    async def format_professional_news(self, title: str, summary: str, source: str, source_url: str,
+                                     prices: Optional[dict] = None, fear_greed: Optional[dict] = None,
+                                     image_url: Optional[str] = None, ai_data: Optional[dict] = None,
+                                     technical_analysis: Optional[str] = None, key_points: Optional[List[str]] = None,
+                                     full_content: Optional[str] = None, footer_template: str = None,
+                                     is_breaking: bool = False) -> Dict:
+        """
+        Форматирует новость в профессиональном стиле (для publish_helper)
+        
+        Returns:
+            Dict: {'text': html_text, 'image_url': image_url}
+        """
+        # 1. Заголовок
+        emoji = "🔥" if is_breaking else "⚡️"
+        header = f"{emoji} <b>{title.upper()}</b>"
+        
+        # 2. Тело новости (summary или full_content если есть и не очень длинный)
+        content_text = summary
+        if full_content and len(full_content) < 1000:
+             content_text = full_content
+             
+        # Очистка
+        content_text = self.clean_text(content_text)
+        
+        # 3. Ключевые моменты (если есть)
+        points_text = ""
+        if key_points:
+            points_text = "\n\n<b>Ключевые моменты:</b>\n" + "\n".join([f"• {p}" for p in key_points])
+
+        # 4. Рыночные данные
+        market_info = ""
+        if prices or fear_greed:
+            market_parts = []
+            if prices:
+                btc = prices.get('bitcoin', {})
+                eth = prices.get('ethereum', {})
+                market_parts.append(f"BTC: ${btc.get('price', 'N/A'):,}")
+                market_parts.append(f"ETH: ${eth.get('price', 'N/A'):,}")
+            
+            if fear_greed:
+                 market_parts.append(f"F&G: {fear_greed.get('value')} ({fear_greed.get('classification')})")
+            
+            if market_parts:
+                market_info = "\n\n📈 " + " | ".join(market_parts)
+
+        # 5. Футер
+        if not footer_template or footer_template == "По умолчанию":
+            footer = self.create_digest_footer()
+        else:
+            footer = "\n" + footer_template
+
+        # Сборка
+        full_text = f"{header}\n\n{content_text}{points_text}{market_info}{footer}"
+        
+        # Обрезаем
+        if len(full_text) > 4096:
+             full_text = full_text[:4000] + "...\n(Читать далее в источнике)"
+
+        return {
+            'text': full_text,
+            'image_url': image_url
+        }
+
     def create_digest_header(self, digest_type: str = "daily") -> str:
         """Заголовок дайджеста"""
         date_str = datetime.now().strftime("%d.%m.%Y")
@@ -249,6 +312,8 @@ async def get_multiple_crypto_prices() -> Optional[Dict]:
     except Exception as e:
         logger.error(f"Error fetching crypto prices: {e}")
         return None
+
+
 
 class ImageExtractor:
     """Helper for extracting images"""
