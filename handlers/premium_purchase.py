@@ -58,8 +58,8 @@ async def premium_offer_base(message: Message, state: FSMContext):
         f"⭐ <b>В звёздах:</b> {price_base['stars']:,}⭐\n\n"
         "🎯 <b>Что входит:</b>\n"
         "• 📊 Premium-сигналы\n"
-        "• 🤖 AI-клон Аналитик 24/7\n"
-        "• 🆘 Premium-поддержка (до 30 мин)\n"
+        "• 🤖 AI-клон Аналитик\n"
+        "• 🆘 Premium-поддержка\n"
         "• 📈 Полная статистика\n"
         "• 💎 Доступ к VIP-услугам\n\n"
         "✨ Трансформируйте свой трейдинг!",

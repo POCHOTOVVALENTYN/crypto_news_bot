@@ -39,7 +39,7 @@ async def show_dashboard(message: Message):
     text += f"Конверсия: {stats['premium_conversion']:.1f}%\n\n"
     
     # Геймификация
-    text += "🎮 <b>Геймификация:</b>\n"
+    text += "🎮 <b>Акция Розыгрыш:</b>\n"
     text += f"Ср. Level: {stats['avg_level']:.1f}\n"
     text += f"Ср. XP: {stats['avg_xp']:.0f}\n"
     text += f"Топ игрок: Lv{stats['top_level']}\n\n"

@@ -170,7 +170,7 @@ async def handle_ai_message(message: Message, state: FSMContext):
             await message.answer(
                 "⚠️ <b>AI временно недоступен</b>\n\n"
                 "Все провайдеры сейчас перегружены или недоступны.\n"
-                "Попробуйте задать вопрос через минуту.",
+                "Попробуйте задать вопрос чуть позже.",
                 parse_mode="HTML",
                 reply_markup=build_exit_ai_keyboard()
             )

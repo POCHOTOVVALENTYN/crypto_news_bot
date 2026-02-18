@@ -43,7 +43,6 @@ async def show_premium_offer(message: Message):
         "✅ Эксклюзивные сигналы по фьючерсам\n"
         "✅ Премиум-аналитика и прогнозы\n"
         "✅ Авторские рекомендации\n"
-        "✅ Обучающий курс\n\n"
         f"💰 <b>Стоимость:</b> {config.premium_price_full} ⭐️ (на {config.premium_duration_days} дней)",
         parse_mode="HTML",
         reply_markup=build_premium_offer_keyboard(config.premium_price_full)
