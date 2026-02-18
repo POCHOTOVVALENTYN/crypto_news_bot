@@ -15,6 +15,7 @@ from database import db
 from loader import bot
 from config import CONSULTATION_PRICES, ADMIN_NAMES, ADMIN_IDS, config
 from services.relay_manager import relay_manager
+from services.payment_manager import PaymentManager
 from utils.states import SupportState, ConsultationState, PriceNegotiationState
 
 router = Router()
@@ -478,6 +479,130 @@ async def admin_close_session(callback: CallbackQuery):
     await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Сессия закрыта", callback_data="noop")]
     ]))
+
+
+
+# === CUSTOM PRICE NEGOTIATION ===
+
+@router.callback_query(F.data.startswith("set_custom_price_"))
+async def admin_initiate_custom_price(callback: CallbackQuery, state: FSMContext):
+    """Админ нажал кнопку 'Выставить счёт' - запрашиваем сумму"""
+    try:
+        session_id = int(callback.data.split("_")[3])
+    except (IndexError, ValueError):
+        await callback.answer("Ошибка данных кнопки", show_alert=True)
+        return
+        
+    admin_id = callback.from_user.id
+    
+    session = await relay_manager.get_session(session_id)
+    if not session:
+        await callback.answer("Сессия не найдена", show_alert=True)
+        return
+    
+    if session['status'] != 'active':
+        await callback.answer("Сессия уже закрыта", show_alert=True)
+        return
+    
+    user_id = session['user_id']
+    
+    await state.set_state(PriceNegotiationState.admin_entering_price)
+    await state.update_data(session_id=session_id, target_user_id=user_id)
+    
+    await callback.answer()
+    await callback.message.answer(
+        "💰 <b>Выставление счёта</b>\n\n"
+        "Введите сумму в USDT (например: 650).\n"
+        "Клиент получит персональное предложение с этой ценой.",
+        parse_mode="HTML"
+    )
+
+
+@router.message(PriceNegotiationState.admin_entering_price)
+async def admin_enter_custom_price(message: Message, state: FSMContext):
+    """Админ ввёл сумму - отправляем оффер"""
+    # Проверка на число
+    if not message.text.isdigit():
+        await message.answer("⚠️ Пожалуйста, введите целое число (например 650).")
+        return
+        
+    amount = int(message.text)
+    
+    MIN_PRICE = 50
+    MAX_PRICE = 5000
+    
+    if amount < MIN_PRICE or amount > MAX_PRICE:
+        await message.answer(f"⚠️ Сумма должна быть от {MIN_PRICE} до {MAX_PRICE} USDT.")
+        return
+    
+    data = await state.get_data()
+    session_id = data.get('session_id')
+    user_id = data.get('target_user_id')
+    
+    if not session_id or not user_id:
+        await message.answer("⚠️ Ошибка: данные сессии потеряны. Попробуйте снова нажать кнопку.")
+        await state.clear()
+        return
+    
+    # Сохраняем цену в сессии (опционально, сейчас просто отправляем)
+    # await db.save_custom_price(session_id, user_id, amount)
+    
+    try:
+        # Отправляем оффер пользователю
+        callback_data = f"pay_custom_usdt:{amount}:{session_id}"
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"💵 Оплатить {amount}$ (USDT)", callback_data=callback_data)]
+        ])
+        
+        await bot.send_message(
+            chat_id=user_id,
+            text=(
+                "🔥 <b>Персональное предложение!</b>\n\n"
+                "Мы согласовали для вас индивидуальные условия подписки.\n"
+                f"💎 <b>Premium доступ</b> (1 месяц)\n"
+                f"💵 Специальная цена: <b>{amount} USDT</b>\n\n"
+                "Нажмите кнопку ниже для оплаты 👇"
+            ),
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        
+        # Подтверждение админу
+        await message.answer(
+            f"✅ <b>Предложение отправлено!</b>\n"
+            f"Клиент видит оффер на {amount} USDT.",
+            parse_mode="HTML"
+        )
+        
+        # Возвращаем админа в режим переговоров (чтобы мог дальше писать)
+        await state.set_state(PriceNegotiationState.discussing_with_admin)
+        
+    except Exception as e:
+        logger.error(f"Ошибка отправки оффера: {e}", exc_info=True)
+        await message.answer("⚠️ Ошибка отправки предложения клиенту.")
+        # Не сбрасываем стейт полностью, даем повторить
+    
+
+@router.callback_query(F.data.startswith("pay_custom_usdt:"))
+async def process_custom_offer_payment(callback: CallbackQuery):
+    """
+    Клиент нажал 'Оплатить Х$' в кастомном оффере.
+    Запускаем PaymentManager с кастомной ценой.
+    Format: pay_custom_usdt:amount:session_id
+    """
+    try:
+        parts = callback.data.split(":")
+        amount = float(parts[1])
+        # session_id = parts[2] # Пока не используем, но может пригодиться для метрик
+    except (IndexError, ValueError):
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    await callback.answer()
+    
+    # Запускаем флоу оплаты с кастомной ценой
+    await PaymentManager.send_invoice(callback.message.chat.id, custom_price=amount)
 
 
 # === CUSTOM PRICE INVOICE ===

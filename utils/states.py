@@ -28,14 +28,14 @@ class ConsultationState(StatesGroup):
 
 class PriceNegotiationState(StatesGroup):
     """Состояния переговоров о цене Premium"""
-    viewing_base_offer = State()  # Просмотр базового предложения
-    checking_subscriptions = State()  # Проверка подписок
-    viewing_discount_offer = State()  # Просмотр предложения со скидкой
-    requesting_custom_price = State()  # Запрос индивидуальной цены
-    discussing_with_admin = State()  # Обсуждение цены (Relay Mode)
-    admin_setting_price = State()  # Админ устанавливает цену
-    admin_entering_price = State()  # Админ вводит сумму (новое)
-    awaiting_custom_payment = State()  # Ожидание оплаты кастомной суммы
+    viewing_base_offer = State()
+    checking_subscriptions = State()
+    viewing_discount_offer = State()
+    requesting_custom_price = State()
+    discussing_with_admin = State()
+    
+    admin_entering_price = State()      # Админ вводит кастомную цену
+    awaiting_custom_payment = State()   # Ожидание оплаты кастомной суммы
 
 class PaymentProofState(StatesGroup):
     waiting_for_proof = State()  # Ожидание скриншота/хеша оплаты

@@ -17,34 +17,50 @@ class PaymentManager:
     CURRENCY = "USDT (TRC-20)"
     
     @staticmethod
-    async def send_invoice(chat_id: int):
-        """Sends manual payment invoice"""
-        text = (
-            f"💎 <b>Premium Подписка (1 месяц)</b>\n\n"
-            f"💵 Стоимость: <b>{PaymentManager.PRICE_USDT} USDT</b>\n"
-            f"🌐 Сеть: <b>TRC-20 (Tron)</b>\n\n"
+    async def send_invoice(chat_id: int, custom_price: float = None):
+        """Sends manual payment invoice (standard or custom price)"""
+        
+        price = custom_price if custom_price else PaymentManager.PRICE_USDT
+        
+        if custom_price:
+            text = (
+                f"🔥 <b>Персональное предложение!</b>\n\n"
+                f"💎 <b>Premium Подписка (1 месяц)</b>\n"
+                f"💵 Специальная цена: <b>{price} USDT</b>\n"
+                f"🌐 Сеть: <b>TRC-20 (Tron)</b>\n\n"
+            )
+        else:
+            text = (
+                f"💎 <b>Premium Подписка (1 месяц)</b>\n\n"
+                f"💵 Стоимость: <b>{price} USDT</b>\n"
+                f"🌐 Сеть: <b>TRC-20 (Tron)</b>\n\n"
+            )
+            
+        text += (
             f"📍 <b>Ваш адрес для пополнения:</b>\n"
             f"<code>{USDT_TRC20_ADDRESS}</code>\n"
             f"(Нажмите на адрес, чтобы скопировать)\n\n"
             f"⚠️ <b>Инструкция:</b>\n"
-            f"1. Переведите ровно {PaymentManager.PRICE_USDT} USDT на указанный адрес.\n"
+            f"1. Переведите ровно {price} USDT на указанный адрес.\n"
             f"2. Сохраните Hash транзакции (TxID) или скриншот.\n"
             f"3. Нажмите кнопку <b>«✅ Я оплатил»</b> ниже."
         )
         
+        # Передаем цену в callback_data, чтобы знать сколько ожидать
         markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data="pay_manual_paid")],
+            [InlineKeyboardButton(text=f"✅ Я оплатил {price} USDT", callback_data=f"pay_manual_paid:{price}")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="pay_back")]
         ])
         
         await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=markup)
 
     @staticmethod
-    async def process_proof(user_id: int, proof_content: Union[str, Message], is_photo: bool = False):
+    async def process_proof(user_id: int, proof_content: Union[str, Message], is_photo: bool = False, amount: float = None):
         """Processes user proof (text hash or photo)"""
         try:
             proof_text = None
             proof_file_id = None
+            price = amount if amount else PaymentManager.PRICE_USDT
             
             if is_photo:
                 # proof_content is Message object here
@@ -59,7 +75,7 @@ class PaymentManager:
             # 1. Create Order in DB
             order_id = await db.create_payment_order(
                 user_id=user_id,
-                amount=PaymentManager.PRICE_USDT,
+                amount=price,
                 currency=PaymentManager.CURRENCY,
                 proof_file_id=proof_file_id,
                 proof_text=proof_text
@@ -73,7 +89,7 @@ class PaymentManager:
             admin_text = (
                 f"💰 <b>Новая заявка на оплату!</b>\n"
                 f"👤 Пользователь: {user_id}\n"
-                f"💵 Сумма: {PaymentManager.PRICE_USDT} USDT\n"
+                f"💵 Сумма: {price} USDT\n"
                 f"🆔 Order ID: {order_id}\n\n"
                 f"Действие:"
             )
