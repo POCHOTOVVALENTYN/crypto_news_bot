@@ -132,6 +132,9 @@ class Settings(BaseSettings):
 
     # === LOGGING ===
     log_level: str = Field("INFO", description="Logging level")
+    
+    # === TIMEZONE ===
+    timezone: str = Field("Europe/Kiev", description="Timezone for the bot")
 
     @field_validator("telegram_channel_id")
     @classmethod
@@ -264,6 +267,8 @@ SOURCE_CHANNELS = config.get_source_channels_list()  # ⚠️ ИСПРАВЛЕН
 PARSE_INTERVAL = config.parse_interval
 FILTER_ENABLED = config.filter_enabled
 LOG_LEVEL = config.log_level
+LOG_LEVEL = config.log_level
 USDT_TRC20_ADDRESS = config.usdt_trc20_address
+TIMEZONE = config.timezone
 
 TG_PHONE_NUMBER = os.getenv("TG_PHONE_NUMBER")

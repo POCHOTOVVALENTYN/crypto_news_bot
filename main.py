@@ -12,6 +12,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from zoneinfo import ZoneInfo
 
 # Импорт конфигурации и загрузчика
 from config import config
@@ -62,7 +63,7 @@ logger = logging.getLogger(__name__)
 
 # Инициализация
 router = Router()
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(timezone=ZoneInfo(config.timezone))
 
 # === НАСТРОЙКА ALERT MANAGER ===
 alert_manager.bot = bot

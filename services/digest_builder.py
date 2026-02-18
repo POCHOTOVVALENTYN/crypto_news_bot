@@ -8,6 +8,7 @@ import random
 import asyncio
 from datetime import datetime
 from typing import List, Dict, Optional
+from zoneinfo import ZoneInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from loader import bot
@@ -57,10 +58,14 @@ class DigestBuilder:
         Вызывается планировщиком каждые 3 часа
         """
         try:
-            # === СИСТЕМНЫЙ "ТИХИЙ РЕЖИМ" (23:00 - 08:00) ===
-            current_hour = datetime.now().hour
-            if current_hour >= 23 or current_hour < 8:
-                logger.info(f"🌙 Тихий режим (23:00-08:00). Дайджест пропущен. (Сейчас {current_hour}:00)")
+            # === СИСТЕМНЫЙ "ТИХИЙ РЕЖИМ" (00:00 - 07:00 KIEV) ===
+            # Используем таймзону из конфига
+            current_time = datetime.now(ZoneInfo(config.timezone))
+            current_hour = current_time.hour
+            
+            # Тихий режим: с 00:00 до 07:00 (включительно 00:00, до 07:00)
+            if 0 <= current_hour < 7:
+                logger.info(f"🌙 Тихий режим (00:00-07:00). Дайджест пропущен. (Сейчас {current_hour}:00)")
                 return
 
             logger.info(f"📰 Начало сборки {self.DIGEST_INTERVAL_HOURS}-часового дайджеста (v2.0)...")
