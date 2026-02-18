@@ -12,7 +12,8 @@ from database import db
 from services.ai_summary import NewsAnalyzer
 from services.message_builder import (
     AdvancedMessageFormatter, RichMediaMessage,
-    get_multiple_crypto_prices, FearGreedIndexTracker
+    get_multiple_crypto_prices, FearGreedIndexTracker,
+    message_formatter
 )
 from services.comment_manager import CommentManager # <--- НОВОЕ
 from services.content_deduplicator import ContentDeduplicator
@@ -189,7 +190,7 @@ async def publish_single_news(news_item: Dict, is_breaking: bool = False):
         footer_template = await db.get_setting("footer_template")
         
         # Форматируем сообщение
-        msg_data = AdvancedMessageFormatter.format_professional_news(
+        msg_data = await message_formatter.format_professional_news(
             title=title,
             summary=summary,
             source=news_item['source'],
@@ -226,7 +227,7 @@ async def publish_single_news(news_item: Dict, is_breaking: bool = False):
                         
                         # Обновляем msg_data с новыми key points
                         # (переформатируем сообщение с обновленными key points)
-                        msg_data = AdvancedMessageFormatter.format_professional_news(
+                        msg_data = await message_formatter.format_professional_news(
                             title=title,
                             summary=summary,
                             source=news_item['source'],
