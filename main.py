@@ -215,13 +215,13 @@ async def main():
         
         # ✅ НОВОЕ: 1-часовой дайджест (вместо постоянного постинга)
         from services.digest_builder import digest_builder
-        scheduler.add_job(
-            digest_builder.build_and_publish_digest,
-            IntervalTrigger(hours=1),
-            id="digest_1hour",
-            name="1-Hour Digest"
-        )
-        logger.info("✅ 1-часовой дайджест настроен")
+        # scheduler.add_job(
+        #     digest_builder.build_and_publish_digest,
+        #     IntervalTrigger(hours=1),
+            # id="digest_1hour",
+            # name="1-Hour Digest"
+        # )
+        # logger.info("✅ 1-часовой дайджест настроен")
         
         # ✅ НОВОЕ: Мониторинг breaking news (каждые 30 секунд)
         from services.breaking_news_moderator import breaking_moderator

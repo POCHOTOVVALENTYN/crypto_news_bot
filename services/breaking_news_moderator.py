@@ -12,6 +12,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loader import bot
 from config import config, ADMIN_IDS
 from database import db
+from services.message_builder import (
+    message_formatter, get_multiple_crypto_prices, FearGreedIndexTracker
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,15 +118,34 @@ class BreakingNewsModerator:
         """Отправить уведомление админу"""
         try:
             # Форматируем сообщение
+            # Формируем ИДЕНТИЧНОЕ сообщение как для публикации (Preview)
+            # Получаем рыночные данные для превью
+            prices = await get_multiple_crypto_prices()
+            fear_greed = await FearGreedIndexTracker.get_fear_greed_index()
+            footer_template = await db.get_setting("footer_template")
+
+            # Форматируем
+            preview_data = await message_formatter.format_professional_news(
+                title=news_item['title'],
+                summary=news_item.get('summary', ''),
+                source=news_item['source'],
+                source_url=news_item['url'],
+                prices=prices,
+                fear_greed=fear_greed,
+                image_url=news_item.get('image_url'),
+                full_content=news_item.get('full_content'),
+                footer_template=footer_template,
+                is_breaking=True
+            )
+            
             message_text = (
                 f"🚨 <b>BREAKING NEWS МОДЕРАЦИЯ</b>\n"
                 f"➖➖➖➖➖➖➖➖➖➖\n"
-                f"📰 <b>{news_item['title']}</b>\n\n"
+                f"{preview_data['text']}\n"
+                f"➖➖➖➖➖➖➖➖➖➖\n"
                 f"⚡️ <b>Приоритет:</b> {news_item['priority']}/10\n"
-                f"🔗 <b>Источник:</b> {news_item['source']}\n"
-                f"⏳ <b>Время:</b> {news_item['added_at']}\n\n"
-                f"📝 <b>Кратко:</b>\n<i>{news_item.get('summary', 'Нет описания')[:300]}...</i>\n\n"
-                f"❌ <i>Авто-отмена через {self.AUTO_PUBLISH_TIMEOUT_MINUTES} мин (если нет реакции)</i>"
+                f"⏳ <b>Время:</b> {news_item['added_at']}\n"
+                f"❌ <i>Авто-отмена через {self.AUTO_PUBLISH_TIMEOUT_MINUTES} мин</i>"
             )
             
             # Создаем inline кнопки (Сырой JSON для API 9.4)
@@ -319,6 +341,8 @@ class BreakingNewsModerator:
         Вызывается планировщиком каждые 1 минуту.
         """
         try:
+            # Используем локальное время без таймзоны для сравнения с БД (там usually local/naive)
+            # Или лучше использовать now() naive если в БД naive
             cutoff_time = datetime.now() - timedelta(minutes=self.AUTO_PUBLISH_TIMEOUT_MINUTES)
             
             # Получаем pending запросы старше таймаута

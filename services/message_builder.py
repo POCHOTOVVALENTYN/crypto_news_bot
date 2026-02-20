@@ -108,32 +108,58 @@ class AdvancedMessageFormatter:
         
         # 2. Тело новости (summary или full_content если есть и не очень длинный)
         content_text = summary
-        if full_content and len(full_content) < 1000:
+        
+        # Если есть картинка, ограничиваем текст 900 символами (лимит caption 1024)
+        max_caption_len = 900 if image_url else 3800
+        
+        if full_content and len(full_content) < max_caption_len:
              content_text = full_content
+        
+        # Обрезаем если слишком длинно
+        if len(content_text) > max_caption_len:
+            content_text = content_text[:max_caption_len] + "..."
              
         # Очистка
         content_text = self.clean_text(content_text)
+        
+        # Убираем источник из текста, если он там есть
+        if source:
+             content_text = content_text.replace(f"Источник: {source}", "").strip()
         
         # 3. Ключевые моменты (если есть)
         points_text = ""
         if key_points:
             points_text = "\n\n<b>Ключевые моменты:</b>\n" + "\n".join([f"• {p}" for p in key_points])
 
-        # 4. Рыночные данные
+        # 4. Рыночные данные (стиль V3.0 как в дайджесте)
         market_info = ""
         if prices or fear_greed:
-            market_parts = []
-            if prices:
-                btc = prices.get('bitcoin', {})
-                eth = prices.get('ethereum', {})
-                market_parts.append(f"BTC: ${btc.get('price', 'N/A'):,}")
-                market_parts.append(f"ETH: ${eth.get('price', 'N/A'):,}")
-            
-            if fear_greed:
-                 market_parts.append(f"F&G: {fear_greed.get('value')} ({fear_greed.get('classification')})")
-            
-            if market_parts:
-                market_info = "\n\n📈 " + " | ".join(market_parts)
+             market_parts = []
+             
+             # Цены
+             if prices:
+                for coin in ['bitcoin', 'ethereum', 'solana']:
+                    if coin in prices:
+                        p = prices[coin]
+                        symbol = p['symbol']
+                        price = p['price']
+                        change = p['change']
+                        emoji_trend = "🚀" if change >= 0 else "🩸"
+                        sign = "+" if change >= 0 else ""
+                        market_parts.append(f"{emoji_trend} <b>{symbol}:</b> ${price:,.0f} ({sign}{change:.1f}%)")
+             
+             # Индекс страха
+             if fear_greed:
+                 val = fear_greed.get('value', 50)
+                 if val >= 75: face = "🤑" # Extreme Greed
+                 elif val >= 55: face = "😊" # Greed
+                 elif val >= 45: face = "😐" # Neutral
+                 elif val >= 25: face = "😰" # Fear
+                 else: face = "😱" # Extreme Fear
+                 market_parts.append(f"{face} <b>F&G:</b> {val}/100")
+             
+             if market_parts:
+                 market_info = "\n\n" + "\n".join(market_parts)
 
         # 5. Футер
         if not footer_template or footer_template == "По умолчанию":
@@ -179,10 +205,18 @@ class AdvancedMessageFormatter:
             f"🔸 <a href='https://t.me/blexler_news'>BLEXLER NEWS</a>"
         )
         
+        return text.strip()
+
     def clean_text(self, text: str) -> str:
-        """Очистка текста от мусора, ссылок и лишних символов"""
+        """Очистка текста от мусора, меншнов, ссылок и лишних символов"""
         if not text:
             return ""
+
+        # 0. Удаляем @mentions (имена каналов)
+        text = re.sub(r'@[\w_]+', '', text)
+        
+        # 0.1 Удаляем t.me ссылки из текста
+        text = re.sub(r't\.me/[\w_/]+', '', text)
 
         # 1. Удаляем Markdown ссылки [Text](URL) -> Text
         # Сначала пробуем сохранить текст ссылки
@@ -193,7 +227,7 @@ class AdvancedMessageFormatter:
         text = re.sub(r'\(http.*?\)', '', text) # (url)
 
         # 3. Удаляем прямые ссылки (если они не часть текста)
-        # Regex для URL
+        # Regex для URL (улучшенный)
         url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
         text = re.sub(url_pattern, '', text)
 
@@ -204,6 +238,11 @@ class AdvancedMessageFormatter:
             # Удаляем повторяющиеся спецсимволы
             line = re.sub(r'^[\*\_\-\=\#\s]+', '', line) # В начале строки
             line = re.sub(r'[\*\_\-\=\#\s]+$', '', line) # В конце строки
+            
+            # Удаляем строки типа "source: ..." или "via ..."
+            if re.match(r'^(source|via|credit|photo|image):', line, re.IGNORECASE):
+                continue
+                
             if line:
                 lines.append(line)
         
@@ -212,8 +251,11 @@ class AdvancedMessageFormatter:
         # 5. Убираем двойные пробелы и множественные переносы
         text = re.sub(r' +', ' ', text)
         text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        # 6. Финальная зачистка
+        text = text.replace('  ', ' ').strip()
 
-        return text.strip()
+        return text
 
 
 # Глобальный экземпляр

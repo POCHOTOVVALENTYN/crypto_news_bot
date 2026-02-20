@@ -245,15 +245,30 @@ async def publish_single_news(news_item: Dict, is_breaking: bool = False):
             except Exception as e:
                 logger.debug(f"Ошибка обработки metadata: {e}")
         
-        # Inline-кнопки
-        keyboard_builder = InlineKeyboardBuilder()
-        keyboard_builder.button(text="💬 Открытый общий чат", url="https://t.me/+514GO2tFjAtkMWRi")
-        keyboard_builder.button(text="📢 Подписаться", url="https://t.me/blexler_invest")
-        keyboard_builder.adjust(1)
-        inline_keyboard = keyboard_builder.as_markup()
+        # Custom Buttons with Color Styles (Raw JSON)
+        # aiogram does not support 'style' in inline keyboard buttons yet
+        reply_markup_dict = {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "💬 Открытый общий чат",
+                        "url": "https://t.me/+514GO2tFjAtkMWRi",
+                        "style": "primary" # Blue button
+                    }
+                ],
+                [
+                    {
+                        "text": "📢 Подписаться",
+                        "url": "https://t.me/blexler_invest",
+                        "style": "success" # Green button
+                    }
+                ]
+            ]
+        }
         
         # Публикуем
-        rich_msg = RichMediaMessage(msg_data['text'], msg_data['image_url'], reply_markup=inline_keyboard)
+        # Используем reply_markup_dict напрямую
+        rich_msg = RichMediaMessage(msg_data['text'], msg_data['image_url'], reply_markup=reply_markup_dict)
         sent_message = await rich_msg.send(bot, config.telegram_channel_id)
         
         if sent_message:
