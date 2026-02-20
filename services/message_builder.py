@@ -103,8 +103,10 @@ class AdvancedMessageFormatter:
             Dict: {'text': html_text, 'image_url': image_url}
         """
         # 1. Заголовок
+        # Очищаем заголовок от артефактов (например, 🐦****)
+        clean_title_header = re.sub(r'[^\w\s\.,!\?\-]', '', title).strip()
         emoji = "🔥" if is_breaking else "⚡️"
-        header = f"{emoji} <b>{title.upper()}</b>"
+        header = f"{emoji} <b>{clean_title_header.upper()}</b>"
         
         # 2. Тело новости (summary или full_content если есть и не очень длинный)
         content_text = summary
@@ -119,8 +121,28 @@ class AdvancedMessageFormatter:
         if len(content_text) > max_caption_len:
             content_text = content_text[:max_caption_len] + "..."
              
-        # Очистка
+        # Очистка текста
         content_text = self.clean_text(content_text)
+
+        # Дедупликация: если тело начинается с заголовка (в любом регистре), убираем его
+        # Нормализуем для сравнения (убираем спецсимволы)
+        norm_title = re.sub(r'[^\w]', '', title.lower())
+        norm_content_start = re.sub(r'[^\w]', '', content_text[:len(title)+20].lower())
+        
+        if norm_content_start.startswith(norm_title):
+            # Пытаемся найти конец заголовка в тексте
+            # Это грубая эвристика, но рабочая для "Title\nBody"
+            # Удаляем первые N символов, равные длине title, но это опасно из-за форматирования
+            # Лучше просто удалить строку, если она похожа
+            
+            # Пробуем split по \n
+            parts = content_text.split('\n', 1)
+            if len(parts) > 1:
+                first_line = parts[0]
+                norm_line = re.sub(r'[^\w]', '', first_line.lower())
+                # Если первая строка это заголовок
+                if norm_title in norm_line or norm_line in norm_title:
+                   content_text = parts[1].strip()
         
         # Убираем источник из текста, если он там есть
         if source:
@@ -200,8 +222,7 @@ class AdvancedMessageFormatter:
     def create_digest_footer(self) -> str:
         """Подвал дайджеста"""
         return (
-            f"\n➖➖➖➖➖➖➖➖➖➖\n"
-            f"🔸 <a href='https://t.me/blexler_support_bot'>BLEXLER SUPPORT</a>\n"
+            f"\n\n🔸 <a href='https://t.me/blexler_support_bot'>BLEXLER SUPPORT</a>\n"
             f"🔸 <a href='https://t.me/blexler_news'>BLEXLER NEWS</a>"
         )
         
@@ -219,7 +240,7 @@ class AdvancedMessageFormatter:
         text = re.sub(r't\.me/[\w_/]+', '', text)
 
         # 1. Удаляем Markdown ссылки [Text](URL) -> Text
-        # Сначала пробуем сохранить текст ссылки
+        # Улучшенный regex: захватываем текст в [], игнорируем URL в ()
         text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
         
         # 2. Удаляем неудаленные скобки и ссылки
@@ -235,10 +256,14 @@ class AdvancedMessageFormatter:
         lines = []
         for line in text.split('\n'):
             line = line.strip()
-            # Удаляем повторяющиеся спецсимволы
+            # Удаляем повторяющиеся спецсимволы и разделители
             line = re.sub(r'^[\*\_\-\=\#\s]+', '', line) # В начале строки
             line = re.sub(r'[\*\_\-\=\#\s]+$', '', line) # В конце строки
             
+            # Удаляем разделители типа ➖➖➖
+            if re.match(r'^[➖\-_=]{3,}$', line):
+                continue
+                
             # Удаляем строки типа "source: ..." или "via ..."
             if re.match(r'^(source|via|credit|photo|image):', line, re.IGNORECASE):
                 continue

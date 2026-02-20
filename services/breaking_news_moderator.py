@@ -341,9 +341,8 @@ class BreakingNewsModerator:
         Вызывается планировщиком каждые 1 минуту.
         """
         try:
-            # Используем локальное время без таймзоны для сравнения с БД (там usually local/naive)
-            # Или лучше использовать now() naive если в БД naive
-            cutoff_time = datetime.now() - timedelta(minutes=self.AUTO_PUBLISH_TIMEOUT_MINUTES)
+            # Используем UTC для сравнения с БД (DEFAULT CURRENT_TIMESTAMP is UTC)
+            cutoff_time = datetime.utcnow() - timedelta(minutes=self.AUTO_PUBLISH_TIMEOUT_MINUTES)
             
             # Получаем pending запросы старше таймаута
             async with db.conn.execute(
