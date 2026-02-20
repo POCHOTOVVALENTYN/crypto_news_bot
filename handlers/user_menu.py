@@ -26,19 +26,12 @@ async def show_premium_features(message: Message, state: FSMContext):
         "• Futures и Spot сделки\n"
         "• Детальные точки входа/выхода\n"
         "• Реальная статистика профита\n\n"
-        "🤖 <b>AI-клон Аналитик</b>\n"
-        "• Персональный помощник 24/7\n"
-        "• Анализ рынка в реальном времени\n"
-        "• Прогнозы и рекомендации\n"
-        "• Ответы на ваши вопросы\n\n"
         "📈 <b>Мой Аккаунт</b>\n"
         "• Детальная статистика\n"
-        "• История сделок и результатов\n"
         "• Персональные настройки\n"
         "• Доступ ко всем фичам\n\n"
         "🆘 <b>Premium-поддержка</b>\n"
         "• Приоритетные ответы от команды\n"
-        "• Среднее время ответа: меньше 30 мин\n"
         "• Прямая связь с основателем\n\n"
         "💎 <b>VIP-услуги:</b>\n"
         "• 💰 Разбор кошелька (300$)\n"
@@ -98,7 +91,7 @@ async def show_support(message: Message, state: FSMContext):
 
 # === ПОДМЕНЮ РОЗЫГРЫША ===
 
-@router.message(F.text == "🎁 Розыгрыш BLEXLER", StateFilter("*"))
+@router.message(F.text == "🎁 АКЦИЯ BLEXLER", StateFilter("*"))
 async def show_giveaway_menu(message: Message, state: FSMContext):
     """Показать подменю розыгрыша"""
     await state.clear()

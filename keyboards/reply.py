@@ -20,7 +20,7 @@ def get_free_menu(user_id: int = None) -> ReplyKeyboardMarkup:
 
         [
             KeyboardButton(text="📎 Пригласить друга"),
-            KeyboardButton(text="🎁 Розыгрыш BLEXLER")
+            KeyboardButton(text="🎁 АКЦИЯ BLEXLER")
         ]
     ]
     
@@ -60,7 +60,9 @@ def get_giveaway_menu():
 def get_premium_menu(user_id: int = None):
     """Клавиатура для Premium пользователей"""
     keyboard = [
-        [KeyboardButton(text="🤖 Мой AI-клон-Аналитик")],
+        # TODO: AI-клон временно скрыт - запланирован АПГРЕИД для будущего релиза
+        # [🤖 Мой AI-клон-Аналитик] - разблокировать когда AI-функция будет готова
+        # [KeyboardButton(text="🤖 Мой AI-клон-Аналитик")],
         [KeyboardButton(text="📊 Premium-сигналы")],  # Было: 🚀 Сигналы (Futures)
         [
             KeyboardButton(text="⚙️ Мой Аккаунт"),
@@ -71,8 +73,8 @@ def get_premium_menu(user_id: int = None):
             KeyboardButton(text="💎 VIP-консультация")  # Было: 💼 Консультация
         ],
         [
-            KeyboardButton(text="📎 Пригласить друга"),
-            KeyboardButton(text="🎁 Розыгрыш BLEXLER")
+            KeyboardButton(text="📢 Пригласить друга"),
+            KeyboardButton(text="🎁 АКЦИЯ BLEXLER")
         ]
     ]
     
