@@ -103,8 +103,14 @@ class AdvancedMessageFormatter:
             Dict: {'text': html_text, 'image_url': image_url}
         """
         # 1. Заголовок
-        # Очищаем заголовок от артефактов (например, 🐦****)
-        clean_title_header = re.sub(r'[^\w\s\.,!\?\-]', '', title).strip()
+        # Исправление 1: берём только ПЕРВУЮ строку title (источник может давать многострочный title)
+        title_first_line = title.split('\n')[0].strip()
+        # Исправление 1б: сначала удаляем URL целиком (http[s]://...), потом артефакты
+        title_no_url = re.sub(r'https?://\S+', '', title_first_line).strip()
+        clean_title_header = re.sub(r'[^\w\s\.,!\?\-]', '', title_no_url).strip()
+        # Если после очистки заголовок пустой — запасной вариант
+        if not clean_title_header:
+            clean_title_header = re.sub(r'[^\w\s]', '', title_no_url).strip() or "Breaking News"
         emoji = "🔥" if is_breaking else "⚡️"
         header = f"{emoji} <b>{clean_title_header.upper()}</b>"
         
@@ -124,29 +130,23 @@ class AdvancedMessageFormatter:
         # Очистка текста
         content_text = self.clean_text(content_text)
 
-        # Дедупликация: если тело начинается с заголовка (в любом регистре), убираем его
-        # Нормализуем для сравнения (убираем спецсимволы)
-        norm_title = re.sub(r'[^\w]', '', title.lower())
-        norm_content_start = re.sub(r'[^\w]', '', content_text[:len(title)+20].lower())
-        
-        if norm_content_start.startswith(norm_title):
-            # Пытаемся найти конец заголовка в тексте
-            # Это грубая эвристика, но рабочая для "Title\nBody"
-            # Удаляем первые N символов, равные длине title, но это опасно из-за форматирования
-            # Лучше просто удалить строку, если она похожа
-            
-            # Пробуем split по \n
-            parts = content_text.split('\n', 1)
-            if len(parts) > 1:
-                first_line = parts[0]
-                norm_line = re.sub(r'[^\w]', '', first_line.lower())
-                # Если первая строка это заголовок
-                if norm_title in norm_line or norm_line in norm_title:
-                   content_text = parts[1].strip()
+        # Исправление 3: улучшенная дедупликация по проценту совпадения слов
+        # Убираем строки, где >60% слов совпадают с заголовком
+        norm_title_words = set(re.sub(r'[^\w]', ' ', title_first_line.lower()).split())
+        if norm_title_words:
+            filtered_lines = []
+            for line in content_text.split('\n'):
+                norm_line_words = set(re.sub(r'[^\w]', ' ', line.lower()).split())
+                if norm_line_words:
+                    overlap = len(norm_title_words & norm_line_words) / len(norm_title_words)
+                    if overlap > 0.6:  # Строка — это дубль заголовка
+                        continue
+                filtered_lines.append(line)
+            content_text = '\n'.join(filtered_lines).strip()
         
         # Убираем источник из текста, если он там есть
         if source:
-             content_text = content_text.replace(f"Источник: {source}", "").strip()
+            content_text = content_text.replace(f"Источник: {source}", "").strip()
         
         # 3. Ключевые моменты (если есть)
         points_text = ""
@@ -183,18 +183,22 @@ class AdvancedMessageFormatter:
              if market_parts:
                  market_info = "\n\n" + "\n".join(market_parts)
 
-        # 5. Футер
-        if not footer_template or footer_template == "По умолчанию":
-            footer = self.create_digest_footer()
-        else:
-            footer = "\n" + footer_template
-
-        # Сборка
-        full_text = f"{header}\n\n{content_text}{points_text}{market_info}{footer}"
+        # Исправление 7: стандартизированная сборка — единый \n\n между блоками
+        # Исправление 6: игнорируем footer_template из БД (старый шаблон), всегда используем create_digest_footer
+        footer = self.create_digest_footer()
+        
+        full_text = header
+        if content_text:
+            full_text += f"\n\n{content_text.strip()}"
+        if points_text:
+            full_text += f"\n\n{points_text.strip()}"
+        if market_info:
+            full_text += f"\n\n{market_info.strip()}"
+        full_text += footer
         
         # Обрезаем
         if len(full_text) > 4096:
-             full_text = full_text[:4000] + "...\n(Читать далее в источнике)"
+            full_text = full_text[:4000] + "...\n(Читать далее в источнике)"
 
         return {
             'text': full_text,
@@ -225,8 +229,7 @@ class AdvancedMessageFormatter:
             f"\n\n🔸 <a href='https://t.me/blexler_support_bot'>BLEXLER SUPPORT</a>\n"
             f"🔸 <a href='https://t.me/blexler_news'>BLEXLER NEWS</a>"
         )
-        
-        return text.strip()
+
 
     def clean_text(self, text: str) -> str:
         """Очистка текста от мусора, меншнов, ссылок и лишних символов"""
@@ -238,6 +241,11 @@ class AdvancedMessageFormatter:
         
         # 0.1 Удаляем t.me ссылки из текста
         text = re.sub(r't\.me/[\w_/]+', '', text)
+
+        # 0.2 Исправление 2: удаляем Telegram-форматирование **жирный**, __курсив__ внутри строк
+        # Это оставляет **** от эмодзи и других артефактов телеграм-парсера
+        text = re.sub(r'\*{2,}', '', text)   # убираем ** **** ***** и подобное
+        text = re.sub(r'_{2,}', '', text)    # убираем __ (цвет курсива в Telegram)
 
         # 1. Удаляем Markdown ссылки [Text](URL) -> Text
         # Улучшенный regex: захватываем текст в [], игнорируем URL в ()
@@ -262,6 +270,14 @@ class AdvancedMessageFormatter:
             
             # Удаляем разделители типа ➖➖➖
             if re.match(r'^[➖\-_=]{3,}$', line):
+                continue
+
+            # Исправление 4: удаляем артефакты пересылки твита из Telegram
+            # "Твит https://... от 08.01.2020:" -> после очистки URL остаётся "Твит от DATE:"
+            if re.match(r'^(\u0422вит|tweet)(\s+от|\s+from)?\s*[\d\.\/\-]+', line, re.IGNORECASE):
+                continue
+            # Удаляем строки вида "httpsx.com..." (артефакт после убрания ://)
+            if re.match(r'^https?[a-zA-Z0-9\.\-/_\?=&]+$', line, re.IGNORECASE):
                 continue
                 
             # Удаляем строки типа "source: ..." или "via ..."
