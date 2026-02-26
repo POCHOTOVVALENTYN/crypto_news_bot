@@ -13,7 +13,7 @@ from keyboards.admin_keyboards import (
     get_posting_menu,
     get_testing_menu,
     get_main_menu_keyboard,  # старое меню
-    get_cancel_keyboard
+    get_cancel_keyboard, get_settings_menu
 )
 from keyboards.reply import get_free_menu, get_premium_menu
 
@@ -164,20 +164,18 @@ async def show_dashboard_menu(message: Message):
 @router.message(F.text == "⚙️ Настройки Бота", F.func(lambda m: admin_filter(m.from_user.id)))
 async def show_bot_settings(message: Message):
     """Настройки бота"""
+    from database import db
+    timeout_val = await db.get_setting("moderation_timeout", "30")
     await message.answer(
         "⚙️ <b>Настройки Бота</b>\n\n"
         "<b>Текущие настройки:</b>\n"
         "• RSS парсинг: ✅ Каждые 10 мин\n"
         "• Публикации: ✅ Каждые 1 мин\n"
-        "• Health Monitor: ✅ Каждые 10 мин\n"
-        "• Авто-дожим: ✅ Каждый час\n"
-        "• Планировщик: ✅ 8:00 ежедневно\n\n"
-        "<b>Администраторы (3):</b>\n"
-        "• Валентин (830196453)\n"
-        "• BLEXLER (304050247)\n"
-        "• Админ #3 (1363924657)\n\n"
-        "Для изменения настроек обратитесь к разработчику.",
-        parse_mode="HTML"
+        "• Health Monitor: ✅ Каждые 10 мин\n\n"
+        f"⏱ <b>Таймаут модерации:</b> {timeout_val} мин.\n\n"
+        "Выберите настройку:",
+        parse_mode="HTML",
+        reply_markup=get_settings_menu()
     )
 
 

@@ -79,6 +79,18 @@ def get_main_menu_keyboard():
     return get_posting_menu()
 
 
+def get_settings_menu():
+    """Подменю настроек бота"""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="⚙️ Настройки футера")],
+            [KeyboardButton(text="⏱ Таймаут модерации")],
+            [KeyboardButton(text="🔙 Главное Меню")]
+        ],
+        resize_keyboard=True
+    )
+
+
 def get_cancel_keyboard():
     """Клавиатура отмены"""
     return ReplyKeyboardMarkup(
