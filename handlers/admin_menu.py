@@ -31,6 +31,7 @@ class AdminStates(StatesGroup):
     waiting_for_post_content = State()
     waiting_for_post_photo = State()
     editing_footer = State()
+    editing_moderation_timeout = State()  # Настройка таймаута модерации
 
 
 # === ФИЛЬТРЫ ДЛЯ АДМИНОВ ===
@@ -415,9 +416,39 @@ async def save_footer(message: Message, state: FSMContext):
     await db.set_setting("footer_template", new_footer)
     await message.answer("✅ Шаблон футера сохранен!", reply_markup=get_main_menu_keyboard())
     await state.clear()
-    await db.set_setting("footer_template", new_footer)
-    await message.answer("✅ Шаблон футера сохранен!", reply_markup=get_main_menu_keyboard())
-    await state.clear()
+
+
+# --- ТАЙМАУТ МОДЕРАЦИИ ---
+@router.message(F.text == "⏱ Таймаут модерации", F.from_user.id == int(ADMIN_ID))
+async def edit_moderation_timeout_start(message: Message, state: FSMContext):
+    current_timeout = await db.get_setting("moderation_timeout", "30")
+    await state.set_state(AdminStates.editing_moderation_timeout)
+    await message.answer(
+        f"⏱ <b>Таймаут модерации Breaking News:</b>\n"
+        f"Текущее: <b>{current_timeout} мин.</b>\n\n"
+        "Отправьте новое значение от 5 до 120 (в минутах):",
+        parse_mode="HTML",
+        reply_markup=get_cancel_keyboard()
+    )
+
+@router.message(AdminStates.editing_moderation_timeout, F.from_user.id == int(ADMIN_ID))
+async def save_moderation_timeout(message: Message, state: FSMContext):
+    if message.text in ["🏠 Главная", "🔙 Назад"]:
+        await cmd_admin_menu(message, state)
+        return
+    try:
+        value = int(message.text.strip())
+        if not (5 <= value <= 120):
+            raise ValueError
+        await db.set_setting("moderation_timeout", str(value))
+        await message.answer(
+            f"✅ Таймаут модерации установлен: <b>{value} мин.</b>",
+            parse_mode="HTML",
+            reply_markup=get_main_menu_keyboard()
+        )
+        await state.clear()
+    except (ValueError, TypeError):
+        await message.answer("❌ Введите целое число от 5 до 120.")
 
 
 # --- ДАЙДЖЕСТЫ ---

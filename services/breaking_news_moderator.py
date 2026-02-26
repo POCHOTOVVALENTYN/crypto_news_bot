@@ -22,11 +22,14 @@ logger = logging.getLogger(__name__)
 class BreakingNewsModerator:
     """Система модерации молниеносных новостей"""
     
-    # Приоритет для breaking news (пользователь установил 9)
+    # Приоритет для breaking news
     BREAKING_PRIORITY_THRESHOLD = 9
     
-    # Таймаут автопубликации (5 минут по требованию пользователя)
-    AUTO_PUBLISH_TIMEOUT_MINUTES = 5
+    # БАГ 5: таймаут увеличен до 30 минут
+    AUTO_PUBLISH_TIMEOUT_MINUTES = 30
+    
+    # Напоминание админам по истечении половины таймаута
+    REMINDER_AT_MINUTES = 15
     
     def __init__(self):
         self.processing_lock = asyncio.Lock()
@@ -80,13 +83,9 @@ class BreakingNewsModerator:
         news_url = news_item['url']
         
         try:
-            # Переводим на русский перед модерацией
             from services.translator import translator
             
             # Переводим на русский перед модерацией
-            from services.translator import translator
-            
-            # Используем async метод translate_news который запускает перевод в executor
             translation = await translator.translate_news(news_item['title'], news_item.get('summary', ''))
             
             if translation:
@@ -115,28 +114,21 @@ class BreakingNewsModerator:
             logger.error(f"❌ Ошибка создания запроса на модерацию: {e}", exc_info=True)
     
     async def _send_admin_notification(self, admin_id: int, news_item: Dict, pending_id: int):
-        """Отправить уведомление админу"""
+        """БАГ 1 ИСПРАВЛЕН: WYSIWYG-превью = полный pipeline публикации"""
         try:
-            # Форматируем сообщение
-            # Формируем ИДЕНТИЧНОЕ сообщение как для публикации (Preview)
-            # Получаем рыночные данные для превью
-            prices = await get_multiple_crypto_prices()
-            fear_greed = await FearGreedIndexTracker.get_fear_greed_index()
-            footer_template = await db.get_setting("footer_template")
-
-            # Форматируем
-            preview_data = await message_formatter.format_professional_news(
-                title=news_item['title'],
-                summary=news_item.get('summary', ''),
-                source=news_item['source'],
-                source_url=news_item['url'],
-                prices=prices,
-                fear_greed=fear_greed,
-                image_url=news_item.get('image_url'),
-                full_content=news_item.get('full_content'),
-                footer_template=footer_template,
-                is_breaking=True
-            )
+            # Импортируем функцию подготовки из publish_helper — тот же pipeline, что и при публикации
+            from services.publish_helper import prepare_news_for_publish
+            
+            # Полная подготовка: перевод, key_points, дедупликация, цены
+            news_copy = dict(news_item)  # не меняем оригинал
+            preview_data = await prepare_news_for_publish(news_copy, is_breaking=True)
+            
+            # Таймаут из базы (если есть) или по умолчанию
+            timeout_min = await db.get_setting("moderation_timeout", str(self.AUTO_PUBLISH_TIMEOUT_MINUTES))
+            try:
+                timeout_min = int(timeout_min)
+            except (ValueError, TypeError):
+                timeout_min = self.AUTO_PUBLISH_TIMEOUT_MINUTES
             
             message_text = (
                 f"🚨 <b>BREAKING NEWS МОДЕРАЦИЯ</b>\n"
@@ -145,47 +137,33 @@ class BreakingNewsModerator:
                 f"➖➖➖➖➖➖➖➖➖➖\n"
                 f"⚡️ <b>Приоритет:</b> {news_item['priority']}/10\n"
                 f"⏳ <b>Время:</b> {news_item['added_at']}\n"
-                f"❌ <i>Авто-отмена через {self.AUTO_PUBLISH_TIMEOUT_MINUTES} мин</i>"
+                f"❌ <i>Авто-отмена через {timeout_min} мин.</i>"
             )
             
-            # Создаем inline кнопки (Сырой JSON для API 9.4)
-            # aiogram может вырезать style, поэтому формируем dict вручную
-            
-            try:
-                reply_markup_dict = {
-                    "inline_keyboard": [
-                        [
-                            {
-                                "text": "✅ Опубликовать",
-                                "callback_data": f"breaking_approve:{pending_id}",
-                                "style": "success"
-                            },
-                            {
-                                "text": "❌ Отклонить",
-                                "callback_data": f"breaking_reject:{pending_id}",
-                                "style": "danger"
-                            }
-                        ]
+            reply_markup_dict = {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": "✅ Опубликовать",
+                            "callback_data": f"breaking_approve:{pending_id}",
+                            "style": "success"
+                        },
+                        {
+                            "text": "❌ Отклонить",
+                            "callback_data": f"breaking_reject:{pending_id}",
+                            "style": "danger"
+                        }
                     ]
-                }
-            except Exception:
-                reply_markup_dict = None
+                ]
+            }
             
-            # Проверяем наличие фото
             image_url = news_item.get('image_url')
             
             try:
-                if image_url:
-                    from aiogram.types import FSInputFile
-                    # Если есть локальный путь к файлу
-                    if not image_url.startswith('http'):
-                         photo = FSInputFile(image_url)
-                    else:
-                         photo = image_url
-                         
+                if image_url and isinstance(image_url, str) and image_url.startswith('http'):
                     await bot.send_photo(
                         chat_id=admin_id,
-                        photo=photo,
+                        photo=image_url,
                         caption=message_text,
                         parse_mode="HTML",
                         reply_markup=reply_markup_dict
@@ -198,8 +176,7 @@ class BreakingNewsModerator:
                         reply_markup=reply_markup_dict
                     )
             except Exception as send_error:
-                logger.warning(f"⚠️ Не удалось отправить фото админу, шлем текст: {send_error}")
-                # Fallback to text only
+                logger.warning(f"⚠️ Не удалось отправить фото админу {admin_id}: {send_error}")
                 await bot.send_message(
                     chat_id=admin_id,
                     text=message_text,
@@ -243,14 +220,14 @@ class BreakingNewsModerator:
                 )
                 return
             
-            # Обновляем решение
+            # БАГ 5 ИСПРАВЛЕН: datetime.utcnow() вместо datetime.now() — согласуется с UTC в БД
             async with db.conn.execute(
                 """
                 UPDATE pending_breaking_news
                 SET admin_decision = ?, admin_approved_by = ?, published_at = ?
                 WHERE id = ?
                 """,
-                (decision, admin_id, datetime.now().isoformat(), pending_id)
+                (decision, admin_id, datetime.utcnow().isoformat(), pending_id)
             ) as cursor:
                 await db.conn.commit()
             
@@ -335,16 +312,24 @@ class BreakingNewsModerator:
     
     async def handle_expired_requests(self):
         """
-        Обработка истекших запросов на модерацию
-        
-        Вместо автопубликации теперь помечаем как expired.
+        Обработка истекших запросов на модерацию.
         Вызывается планировщиком каждые 1 минуту.
         """
         try:
-            # Используем UTC для сравнения с БД (DEFAULT CURRENT_TIMESTAMP is UTC)
-            cutoff_time = datetime.utcnow() - timedelta(minutes=self.AUTO_PUBLISH_TIMEOUT_MINUTES)
+            # БАГ 5 ИСПРАВЛЕН: используем utcnow() — соответствует DEFAULT CURRENT_TIMESTAMP (БД UTC)
+            now_utc = datetime.utcnow()
             
-            # Получаем pending запросы старше таймаута
+            # Таймаут из БД (настраиваемый админом)
+            timeout_min = await db.get_setting("moderation_timeout", str(self.AUTO_PUBLISH_TIMEOUT_MINUTES))
+            try:
+                timeout_min = int(timeout_min)
+            except (ValueError, TypeError):
+                timeout_min = self.AUTO_PUBLISH_TIMEOUT_MINUTES
+            
+            cutoff_time = now_utc - timedelta(minutes=timeout_min)
+            reminder_time = now_utc - timedelta(minutes=self.REMINDER_AT_MINUTES)
+            
+            # Получаем pending запросы
             async with db.conn.execute(
                 """
                 SELECT * FROM pending_breaking_news
@@ -363,6 +348,45 @@ class BreakingNewsModerator:
             
             for request in expired_requests:
                 await self._expire_request(request)
+        
+            # БАГ 5: Напоминание на половине таймаута (если reminder < timeout)
+            if self.REMINDER_AT_MINUTES < timeout_min:
+                async with db.conn.execute(
+                    """
+                    SELECT id, news_url FROM pending_breaking_news
+                    WHERE admin_decision = 'pending'
+                    AND detected_at < ?
+                    AND detected_at >= ?
+                    AND reminded_at IS NULL
+                    """,
+                    (reminder_time.isoformat(), cutoff_time.isoformat())
+                ) as cursor:
+                    cursor.row_factory = lambda c, r: dict(zip([col[0] for col in c.description], r))
+                    to_remind = await cursor.fetchall()
+                
+                for req in to_remind:
+                    remaining = timeout_min - self.REMINDER_AT_MINUTES
+                    for admin_id in ADMIN_IDS:
+                        try:
+                            await bot.send_message(
+                                chat_id=admin_id,
+                                text=(
+                                    f"⏰ <b>Напоминание!</b> Breaking News ID: {req['id']}\n"
+                                    f"❗ Осталось <b>{remaining} мин.</b> для одобрения или отклонения."
+                                ),
+                                parse_mode="HTML"
+                            )
+                        except Exception:
+                            pass
+                    # Помечаем что напомнили
+                    try:
+                        async with db.conn.execute(
+                            "UPDATE pending_breaking_news SET reminded_at = ? WHERE id = ?",
+                            (now_utc.isoformat(), req['id'])
+                        ):
+                            await db.conn.commit()
+                    except Exception:
+                        pass  # reminded_at может еще не существовать в БД
                 
         except Exception as e:
             logger.error(f"❌ Ошибка handle_expired_requests: {e}", exc_info=True)

@@ -39,3 +39,8 @@ class PriceNegotiationState(StatesGroup):
 
 class PaymentProofState(StatesGroup):
     waiting_for_proof = State()  # Ожидание скриншота/хеша оплаты
+
+class AdminStates(StatesGroup):
+    """Admin FSM состояния"""
+    editing_footer = State()
+    editing_moderation_timeout = State()  # Настройка таймаута модерации

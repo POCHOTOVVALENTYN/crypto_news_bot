@@ -117,15 +117,15 @@ class AdvancedMessageFormatter:
         # 2. Тело новости (summary или full_content если есть и не очень длинный)
         content_text = summary
         
-        # Если есть картинка, ограничиваем текст 900 символами (лимит caption 1024)
-        max_caption_len = 900 if image_url else 3800
+        # Если есть картинка, ограничиваем текст 950 символами (лимит caption 1024, запас на HTML теги)
+        max_caption_len = 950 if image_url else 3800
         
         if full_content and len(full_content) < max_caption_len:
              content_text = full_content
         
-        # Обрезаем если слишком длинно
+        # БАГ 3 ИСПРАВЛЕН: умный обрез по последнему предложению/переносу вместо жёсткого среза
         if len(content_text) > max_caption_len:
-            content_text = content_text[:max_caption_len] + "..."
+            content_text = self._smart_truncate(content_text, max_caption_len)
              
         # Очистка текста
         content_text = self.clean_text(content_text)
@@ -183,9 +183,9 @@ class AdvancedMessageFormatter:
              if market_parts:
                  market_info = "\n\n" + "\n".join(market_parts)
 
-        # Исправление 7: стандартизированная сборка — единый \n\n между блоками
-        # Исправление 6: игнорируем footer_template из БД (старый шаблон), всегда используем create_digest_footer
-        footer = self.create_digest_footer()
+        # Исправление 7 + БАГ 4: стандартизированная сборка.
+        # Для публичных публикаций — channel_footer (Instagram + Telegram)
+        footer = self.create_channel_footer()
         
         full_text = header
         if content_text:
@@ -196,14 +196,27 @@ class AdvancedMessageFormatter:
             full_text += f"\n\n{market_info.strip()}"
         full_text += footer
         
-        # Обрезаем
+        # Обрезаем финальный текст если нужно
         if len(full_text) > 4096:
-            full_text = full_text[:4000] + "...\n(Читать далее в источнике)"
+            full_text = full_text[:4000] + "... (Читать далее в источнике)"
 
         return {
             'text': full_text,
             'image_url': image_url
         }
+
+    @staticmethod
+    def _smart_truncate(text: str, max_len: int) -> str:
+        """БАГ 3: Умный обрез — по последнему полному предложению или строке"""
+        if len(text) <= max_len:
+            return text
+        truncated = text[:max_len]
+        # Ищем последний хороший разрыв: перенос строки или конец предложения
+        for sep in ('\n', '. ', '! ', '? ', ': '):
+            last_pos = truncated.rfind(sep)
+            if last_pos > max_len * 0.6:
+                return truncated[:last_pos + 1].strip() + " ..."
+        return truncated.strip() + " ..."
 
     def create_digest_header(self, digest_type: str = "daily") -> str:
         """Заголовок дайджеста"""
@@ -224,12 +237,18 @@ class AdvancedMessageFormatter:
         return ""
 
     def create_digest_footer(self) -> str:
-        """Подвал дайджеста"""
+        """Подвал для рассылок в боте (поддержка)"""
         return (
             f"\n\n🔸 <a href='https://t.me/blexler_support_bot'>BLEXLER SUPPORT</a>\n"
             f"🔸 <a href='https://t.me/blexler_news'>BLEXLER NEWS</a>"
         )
 
+    def create_channel_footer(self) -> str:
+        """БАГ 4: Правильный футер для публикаций в канале (Instagram + Telegram)"""
+        return (
+            f"\n\n🔸<a href='https://www.instagram.com/zhenya_eduardovich.2?igsh=M2lwN2p2enhuN3Nl'>BLEXLER INSTAGRAM</a>🔸\n"
+            f"🔸<a href='https://t.me/blexler_invest'>BLEXLER TELEGRAM</a>🔸"
+        )
 
     def clean_text(self, text: str) -> str:
         """Очистка текста от мусора, меншнов, ссылок и лишних символов"""
@@ -315,18 +334,27 @@ class RichMediaMessage:
     async def send(self, bot, chat_id: int):
         try:
             if self.image_url:
-                try:
-                    return await bot.send_photo(
-                        chat_id=chat_id,
-                        photo=self.image_url,
-                        caption=self.text,
-                        parse_mode="HTML",
-                        reply_markup=self.reply_markup
+                # БАГ 2 ИСПРАВЛЕН: проверяем URL и логируем ошибку отправки фото
+                if not isinstance(self.image_url, str) or not self.image_url.startswith('http'):
+                    logging.getLogger(__name__).warning(
+                        f"⚠️ Невалидный image_url (?пропустим фото): {repr(self.image_url)[:80]}"
                     )
-                except Exception as e:
-                    logging.getLogger(__name__).warning(f"Failed to send photo, sending text only: {e}")
+                else:
+                    try:
+                        return await bot.send_photo(
+                            chat_id=chat_id,
+                            photo=self.image_url,
+                            caption=self.text,
+                            parse_mode="HTML",
+                            reply_markup=self.reply_markup
+                        )
+                    except Exception as e:
+                        # БАГ 2: теперь логируем ошибку — раньше она поглощалась молча!
+                        logging.getLogger(__name__).error(
+                            f"❌ Ошибка отправки фото (отправляю текстом): {e} | URL: {self.image_url[:80]}"
+                        )
             
-            # Fallback to text
+            # Fallback к текстовому сообщению
             return await bot.send_message(
                 chat_id=chat_id,
                 text=self.text,
