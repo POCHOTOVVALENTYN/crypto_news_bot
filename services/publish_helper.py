@@ -132,6 +132,52 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
     summary = dedup_result['content'] or news_item.get('summary', '')
     key_points = dedup_result['key_points']
     
+    # =========================================================
+    # AI-РЕРАЙТ: умный копирайтинг под лимиты Telegram
+    # =========================================================
+    has_image = bool(news_item.get('image_url'))
+    
+    # Собираем весь контент для оценки длины
+    raw_body = full_content or summary or ''
+    
+    # Лимиты: caption с фото — 800 симв, текст без фото — 3200 симв
+    tg_limit = 800 if has_image else 3200
+    
+    # Рерайтим только если текст реально большой (+ заголовок ~100 симв)
+    needs_rewrite = len(raw_body) > tg_limit
+    
+    ai_rewritten_text: Optional[str] = None
+    if needs_rewrite:
+        try:
+            tone = "breaking" if is_breaking else "analysis"
+            logger.info(
+                f"🤖 Запускаю AI-рерайт: {len(raw_body)} симв → цель {tg_limit} "
+                f"(фото={has_image}, breaking={is_breaking})"
+            )
+            news_analyzer = NewsAnalyzer()
+            ai_rewritten_text = await news_analyzer.rewrite_for_telegram(
+                text=raw_body,
+                title=title,
+                has_image=has_image,
+                tone=tone
+            )
+            if ai_rewritten_text:
+                # AI написал связный текст — используем его как summary
+                # key_points отключаем (они избыточны когда текст уже переписан)
+                summary = ai_rewritten_text
+                key_points = []  # AI уже всё включил в единый текст
+                logger.info(f"✅ AI-рерайт применён: итого {len(summary)} симв.")
+            else:
+                # AI недоступен — smart_truncate как fallback
+                logger.warning("⚠️ AI-рерайт вернул None — применяю smart_truncate fallback")
+                from services.message_builder import AdvancedMessageFormatter as AMF
+                summary = AMF._smart_truncate(raw_body, tg_limit)
+        except Exception as e:
+            logger.error(f"❌ Ошибка AI-рерайта: {e} — применяю fallback")
+            from services.message_builder import AdvancedMessageFormatter as AMF
+            summary = AMF._smart_truncate(raw_body, tg_limit)
+    # =========================================================
+    
     # Получаем цены и индекс страха
     prices = await get_multiple_crypto_prices()
     fear_greed = await FearGreedIndexTracker.get_fear_greed_index()
@@ -174,6 +220,7 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
             logger.debug(f"Ошибка обработки metadata: {e}")
     
     return msg_data
+
 
 
 async def publish_single_news(news_item: Dict, is_breaking: bool = False):

@@ -77,6 +77,126 @@ class NewsAnalyzer:
         
         return result
 
+    async def rewrite_for_telegram(
+        self,
+        text: str,
+        title: str = "",
+        has_image: bool = False,
+        tone: str = "breaking"  # "breaking" | "analysis" | "brief"
+    ) -> Optional[str]:
+        """
+        AI-рерайт новости под лимиты Telegram.
+
+        Telegram limits:
+          - caption (с фото): 1024 символа HTML
+          - message (без фото): 4096 символов HTML
+        Мы используем безопасный запас: 830 симв. для caption, 3400 для message.
+
+        Args:
+            text: Исходный текст (переведённый на русский)
+            title: Заголовок (для контекста, не включается в результат)
+            has_image: True если публикация будет с фото
+            tone: Стиль подачи:
+                  "breaking" — срочно, факты, коротко
+                  "analysis" — чуть глубже, с контекстом
+                  "brief"    — максимально коротко
+
+        Returns:
+            Рерайтнутый текст или None (если AI недоступен → используй fallback)
+        """
+        # Целевая длина с запасом на HTML-теги и футер
+        if has_image:
+            target_len = 800   # caption лимит Telegram — 1024, запас на HTML + футер
+        else:
+            target_len = 3200  # message лимит — 4096, запас на заголовок + футер
+
+        # Если текст уже короткий — рерайт не нужен
+        if len(text) <= target_len:
+            return None  # сигнал: рерайт не требуется
+
+        # Тональность
+        tone_instructions = {
+            "breaking": (
+                "Стиль: СРОЧНО. Факты, без воды. Перевёрнутая пирамида — "
+                "самое важное в первом предложении."
+            ),
+            "analysis": (
+                "Стиль: Аналитический. Контекст → суть → вывод для инвестора. "
+                "Можно 2-3 предложения с пояснением."
+            ),
+            "brief": (
+                "Стиль: Ультра-кратко. Только одно ключевое предложение + одно пояснение."
+            ),
+        }.get(tone, "Стиль: нейтральный, информативный.")
+
+        title_ctx = f'ЗАГОЛОВОК: "{title}"\n\n' if title else ""
+
+        prompt = f"""Ты — профессиональный копирайтер крипто-Telegram-канала BLEXLER.
+
+{title_ctx}ИСХОДНЫЙ ТЕКСТ НОВОСТИ:
+{text[:4000]}
+
+ЗАДАЧА — РЕРАЙТ:
+Перепиши текст новости как готовый пост для Telegram-канала.
+
+ТРЕБОВАНИЯ:
+1. Длина результата: СТРОГО от {target_len - 80} до {target_len} символов (считай все символы включая пробелы)
+2. {tone_instructions}
+3. Язык: живой разговорный русский, без канцелярита и штампов
+4. Структура (3 части без заголовков):
+   — Зацепка: 1 предложение с самым важным фактом (цифры, имена, действия)
+   — Контекст: 1-2 предложения, объясняющих суть события
+   — Значимость: 1 предложение, почему это важно для крипто-рынка / инвестора
+5. Каждая мысль должна быть ЗАВЕРШЕНА — никаких обрывов!
+6. HTML-разметка: разрешены только <b>текст</b> и <i>текст</i>
+7. НЕ используй: Markdown (**), ссылки, эмодзи, списки с буллет-поинтами
+8. НЕ добавляй заголовок в текст (он идёт отдельно)
+9. НЕ начинай с «В мире крипто» или «Согласно источникам»
+
+ВЫВЕДИ ТОЛЬКО ГОТОВЫЙ ТЕКСТ ПОСТА. Без пояснений, без кавычек вокруг текста."""
+
+        try:
+            result_text = await self.ai_manager.generate_text(
+                prompt=prompt,
+                system_prompt=(
+                    "You are a professional Russian-language crypto copywriter. "
+                    "Output ONLY the rewritten post text, nothing else. "
+                    "Strictly respect the character limit. Complete all sentences."
+                ),
+                timeout=30.0  # Breaking news — быстро
+            )
+
+            if not result_text:
+                logger.warning("⚠️ AI rewrite: пустой ответ от провайдера")
+                return None
+
+            # Очищаем возможные markdown-обёртки
+            result_text = result_text.strip().strip('`').strip('"').strip("'")
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1].strip()
+
+            # Проверяем длину — если AI написал слишком длинный текст,
+            # обрезаем по последнему предложению
+            if len(result_text) > target_len + 50:
+                # Обрезаем по последнему полному предложению
+                for sep in ('. ', '.\n', '! ', '? '):
+                    last = result_text[:target_len].rfind(sep)
+                    if last > target_len * 0.6:
+                        result_text = result_text[:last + 1].strip()
+                        break
+                else:
+                    result_text = result_text[:target_len].strip()
+
+            logger.info(
+                f"✅ AI rewrite: {len(text)} → {len(result_text)} симв. "
+                f"(target {target_len}, image={has_image})"
+            )
+            return result_text
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка AI rewrite: {e}")
+            return None
+
     async def generate_digest(self, news_list: list[Dict], period_name: str = "сутки") -> Optional[str]:
         """
         Генерирует дайджест новостей.
