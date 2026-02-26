@@ -18,6 +18,20 @@ from services.message_builder import (
 
 logger = logging.getLogger(__name__)
 
+# SQLite CURRENT_TIMESTAMP формат: '2026-02-26 14:31:00' (без T, без микросекунд)
+# isoformat() даёт '2026-02-26T14:31:00.123456' — при строковом сравнении
+# буква T (ASCII 84) > пробел (ASCII 32), поэтому любая запись CURRENT_TIMESTAMP
+# сразу считалась 'просроченной' — это и была причина бага!
+_SQLITE_FMT = "%Y-%m-%d %H:%M:%S"
+
+def _sqlite_now() -> str:
+    """Текущее UTC время в формате, совместимом с SQLite CURRENT_TIMESTAMP"""
+    return datetime.utcnow().strftime(_SQLITE_FMT)
+
+def _sqlite_dt(dt: datetime) -> str:
+    """datetime → SQLite-совместимая строка"""
+    return dt.strftime(_SQLITE_FMT)
+
 
 class BreakingNewsModerator:
     """Система модерации молниеносных новостей"""
@@ -220,14 +234,14 @@ class BreakingNewsModerator:
                 )
                 return
             
-            # БАГ 5 ИСПРАВЛЕН: datetime.utcnow() вместо datetime.now() — согласуется с UTC в БД
+            # БАГ 5 ИСПРАВЛЕН: формат дат совместим с SQLite (strftime вместо isoformat)
             async with db.conn.execute(
                 """
                 UPDATE pending_breaking_news
                 SET admin_decision = ?, admin_approved_by = ?, published_at = ?
                 WHERE id = ?
                 """,
-                (decision, admin_id, datetime.utcnow().isoformat(), pending_id)
+                (decision, admin_id, _sqlite_now(), pending_id)
             ) as cursor:
                 await db.conn.commit()
             
@@ -316,7 +330,7 @@ class BreakingNewsModerator:
         Вызывается планировщиком каждые 1 минуту.
         """
         try:
-            # БАГ 5 ИСПРАВЛЕН: используем utcnow() — соответствует DEFAULT CURRENT_TIMESTAMP (БД UTC)
+            # ФОРМАТ ДАТ ИСПРАВЛЕН: strftime('%Y-%m-%d %H:%M:%S') совместим с SQLite CURRENT_TIMESTAMP
             now_utc = datetime.utcnow()
             
             # Таймаут из БД (настраиваемый админом)
@@ -326,8 +340,8 @@ class BreakingNewsModerator:
             except (ValueError, TypeError):
                 timeout_min = self.AUTO_PUBLISH_TIMEOUT_MINUTES
             
-            cutoff_time = now_utc - timedelta(minutes=timeout_min)
-            reminder_time = now_utc - timedelta(minutes=self.REMINDER_AT_MINUTES)
+            cutoff_time = _sqlite_dt(now_utc - timedelta(minutes=timeout_min))
+            reminder_time = _sqlite_dt(now_utc - timedelta(minutes=self.REMINDER_AT_MINUTES))
             
             # Получаем pending запросы
             async with db.conn.execute(
@@ -336,7 +350,7 @@ class BreakingNewsModerator:
                 WHERE admin_decision = 'pending'
                 AND detected_at < ?
                 """,
-                (cutoff_time.isoformat(),)
+                (cutoff_time,)
             ) as cursor:
                 cursor.row_factory = lambda c, r: dict(zip([col[0] for col in c.description], r))
                 expired_requests = await cursor.fetchall()
@@ -359,7 +373,7 @@ class BreakingNewsModerator:
                     AND detected_at >= ?
                     AND reminded_at IS NULL
                     """,
-                    (reminder_time.isoformat(), cutoff_time.isoformat())
+                    (reminder_time, cutoff_time)
                 ) as cursor:
                     cursor.row_factory = lambda c, r: dict(zip([col[0] for col in c.description], r))
                     to_remind = await cursor.fetchall()
@@ -382,7 +396,7 @@ class BreakingNewsModerator:
                     try:
                         async with db.conn.execute(
                             "UPDATE pending_breaking_news SET reminded_at = ? WHERE id = ?",
-                            (now_utc.isoformat(), req['id'])
+                            (_sqlite_now(), req['id'])
                         ):
                             await db.conn.commit()
                     except Exception:
