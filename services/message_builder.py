@@ -117,13 +117,21 @@ class AdvancedMessageFormatter:
         # 2. Тело новости (summary или full_content если есть и не очень длинный)
         content_text = summary
         
-        # Если есть картинка, ограничиваем текст 950 символами (лимит caption 1024, запас на HTML теги)
-        max_caption_len = 950 if image_url else 3800
+        # Оценка overhead: заголовок (~80) + Ключевые моменты (~60 + N*100) + рыночные данные (~120) + футер (~130)
+        # Итого ~350-500 символов занято служебными блоками
+        OVERHEAD_ESTIMATE = 400
+        # Если есть картинка: caption лимит 1024, запас на HTML теги → 950
+        # Если нет картинки: message лимит 4096, минус overhead → 3600
+        if image_url:
+            max_caption_len = 950 - OVERHEAD_ESTIMATE  # ~550 для тела текста
+            max_caption_len = max(max_caption_len, 400)  # не меньше 400
+        else:
+            max_caption_len = 3800 - OVERHEAD_ESTIMATE  # ~3400 для тела текста
         
         if full_content and len(full_content) < max_caption_len:
              content_text = full_content
         
-        # БАГ 3 ИСПРАВЛЕН: умный обрез по последнему предложению/переносу вместо жёсткого среза
+        # Умный обрез контента по последнему предложению (не полусловен!)
         if len(content_text) > max_caption_len:
             content_text = self._smart_truncate(content_text, max_caption_len)
              
@@ -196,9 +204,28 @@ class AdvancedMessageFormatter:
             full_text += f"\n\n{market_info.strip()}"
         full_text += footer
         
-        # Обрезаем финальный текст если нужно
-        if len(full_text) > 4096:
-            full_text = full_text[:4000] + "... (Читать далее в источнике)"
+        # Финальный smart_truncate — гарантируем лимиты Telegram
+        # caption (с фото): 1024 симв, message (без фото): 4096 симв
+        # Используем чуть меньший лимит как страховой запас на HTML-теги
+        telegram_limit = 1000 if image_url else 4000
+        if len(full_text) > telegram_limit:
+            # Обрезаем по предложению: сначала пытаемся вырезать тело,
+            # оставляя заголовок и футер нетронутыми
+            body_start = len(header) + 2  # +2 за \n\n
+            body_end = full_text.rfind('\n\n🔸')  # перед футером
+            if body_end > body_start:
+                # Есть выделенный блок тела — обрезаем только его
+                available_for_body = telegram_limit - (len(full_text) - body_end)
+                if available_for_body > 100:
+                    body_part = self._smart_truncate(
+                        full_text[body_start:body_end], available_for_body
+                    )
+                    full_text = header + '\n\n' + body_part + full_text[body_end:]
+                else:
+                    # Совсем мало места — просто smart_truncate всего
+                    full_text = self._smart_truncate(full_text, telegram_limit)
+            else:
+                full_text = self._smart_truncate(full_text, telegram_limit)
 
         return {
             'text': full_text,
@@ -206,17 +233,21 @@ class AdvancedMessageFormatter:
         }
 
     @staticmethod
-    def _smart_truncate(text: str, max_len: int) -> str:
-        """БАГ 3: Умный обрез — по последнему полному предложению или строке"""
+    def _smart_truncate(text: str, max_len: int, marker: str = " ...") -> str:
+        """Умный обрез — по последнему полному предложению или строке. Никогда не рвёт на полуслове."""
         if len(text) <= max_len:
             return text
+        # Ищем последний хороший разрыв внутри первых max_len символов
         truncated = text[:max_len]
-        # Ищем последний хороший разрыв: перенос строки или конец предложения
-        for sep in ('\n', '. ', '! ', '? ', ': '):
+        for sep in ('\n', '. ', '! ', '? ', ': ', ', '):
             last_pos = truncated.rfind(sep)
-            if last_pos > max_len * 0.6:
-                return truncated[:last_pos + 1].strip() + " ..."
-        return truncated.strip() + " ..."
+            if last_pos > max_len * 0.55:  # нашли разумный разрыв
+                return truncated[:last_pos + 1].strip() + marker
+        # Fallback: обрываем по последнему пробелу (хотя бы не на полуслове)
+        last_space = truncated.rfind(' ')
+        if last_space > max_len * 0.5:
+            return truncated[:last_space].strip() + marker
+        return truncated.strip() + marker
 
     def create_digest_header(self, digest_type: str = "daily") -> str:
         """Заголовок дайджеста"""

@@ -140,18 +140,24 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
     # Собираем весь контент для оценки длины
     raw_body = full_content or summary or ''
     
-    # Лимиты: caption с фото — 800 симв, текст без фото — 3200 симв
-    tg_limit = 800 if has_image else 3200
+    # OVERHEAD: заголовок ~80 + ключевые моменты ~60+N*100 + цены/F&G ~120 + футер ~130 = ~400
+    OVERHEAD = 400
+    # Реальный доступный лимит для тела текста (с учётом форматирования)
+    if has_image:
+        body_limit = 950 - OVERHEAD  # caption лимит 1024 → ~550 для тела
+        body_limit = max(body_limit, 350)
+    else:
+        body_limit = 3800 - OVERHEAD  # message лимит 4096 → ~3400 для тела
     
-    # Рерайтим только если текст реально большой (+ заголовок ~100 симв)
-    needs_rewrite = len(raw_body) > tg_limit
+    # Рерайтим только если тело текста превышает доступный лимит
+    needs_rewrite = len(raw_body) > body_limit
     
     ai_rewritten_text: Optional[str] = None
     if needs_rewrite:
         try:
             tone = "breaking" if is_breaking else "analysis"
             logger.info(
-                f"🤖 Запускаю AI-рерайт: {len(raw_body)} симв → цель {tg_limit} "
+                f"🤖 Запускаю AI-рерайт: {len(raw_body)} симв → цель {body_limit} "
                 f"(фото={has_image}, breaking={is_breaking})"
             )
             news_analyzer = NewsAnalyzer()
@@ -171,11 +177,13 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
                 # AI недоступен — smart_truncate как fallback
                 logger.warning("⚠️ AI-рерайт вернул None — применяю smart_truncate fallback")
                 from services.message_builder import AdvancedMessageFormatter as AMF
-                summary = AMF._smart_truncate(raw_body, tg_limit)
+                summary = AMF._smart_truncate(raw_body, body_limit)
+                key_points = []
         except Exception as e:
             logger.error(f"❌ Ошибка AI-рерайта: {e} — применяю fallback")
             from services.message_builder import AdvancedMessageFormatter as AMF
-            summary = AMF._smart_truncate(raw_body, tg_limit)
+            summary = AMF._smart_truncate(raw_body, body_limit)
+            key_points = []
     # =========================================================
     
     # Получаем цены и индекс страха
