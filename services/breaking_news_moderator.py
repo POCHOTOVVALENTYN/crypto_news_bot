@@ -328,82 +328,114 @@ class BreakingNewsModerator:
         """
         Обработка истекших запросов на модерацию.
         Вызывается планировщиком каждые 1 минуту.
+        
+        БАГ 2+3 ИСПРАВЛЕН: reminder-блок выполняется ВСЕГДА, независимо
+        от того, есть ли истёкшие новости. Разделено на два независимых блока.
         """
         try:
-            # ФОРМАТ ДАТ ИСПРАВЛЕН: strftime('%Y-%m-%d %H:%M:%S') совместим с SQLite CURRENT_TIMESTAMP
             now_utc = datetime.utcnow()
             
             # Таймаут из БД (настраиваемый админом)
-            timeout_min = await db.get_setting("moderation_timeout", str(self.AUTO_PUBLISH_TIMEOUT_MINUTES))
+            timeout_min_raw = await db.get_setting("moderation_timeout", str(self.AUTO_PUBLISH_TIMEOUT_MINUTES))
             try:
-                timeout_min = int(timeout_min)
+                timeout_min = int(timeout_min_raw)
             except (ValueError, TypeError):
                 timeout_min = self.AUTO_PUBLISH_TIMEOUT_MINUTES
             
-            cutoff_time = _sqlite_dt(now_utc - timedelta(minutes=timeout_min))
-            reminder_time = _sqlite_dt(now_utc - timedelta(minutes=self.REMINDER_AT_MINUTES))
+            cutoff_str    = _sqlite_dt(now_utc - timedelta(minutes=timeout_min))
+            reminder_str  = _sqlite_dt(now_utc - timedelta(minutes=self.REMINDER_AT_MINUTES))
             
-            # Получаем pending запросы
+            # ── БЛОК 1: отмена истёкших (detected_at < now-30мин) ─────────────
+            await self._expire_old_requests(cutoff_str)
+            
+            # ── БЛОК 2: напоминание (detected_at между now-30мин и now-15мин) ─
+            # Выполняется ВСЕГДА, не зависит от Блока 1
+            if self.REMINDER_AT_MINUTES < timeout_min:
+                await self._send_reminders(reminder_str, cutoff_str)
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка handle_expired_requests: {e}", exc_info=True)
+
+    async def _expire_old_requests(self, cutoff_str: str):
+        """Отменяем pending новости старше таймаута."""
+        try:
             async with db.conn.execute(
                 """
                 SELECT * FROM pending_breaking_news
                 WHERE admin_decision = 'pending'
                 AND detected_at < ?
                 """,
-                (cutoff_time,)
+                (cutoff_str,)
             ) as cursor:
                 cursor.row_factory = lambda c, r: dict(zip([col[0] for col in c.description], r))
                 expired_requests = await cursor.fetchall()
-            
+
             if not expired_requests:
                 return
-            
-            logger.info(f"⏱️ Обнаружено {len(expired_requests)} истекших breaking news. Отмена публикации.")
-            
+
+            logger.info(f"⏱ Истекло {len(expired_requests)} breaking news — отменяю.")
             for request in expired_requests:
                 await self._expire_request(request)
-        
-            # БАГ 5: Напоминание на половине таймаута (если reminder < timeout)
-            if self.REMINDER_AT_MINUTES < timeout_min:
-                async with db.conn.execute(
-                    """
-                    SELECT id, news_url FROM pending_breaking_news
-                    WHERE admin_decision = 'pending'
-                    AND detected_at < ?
-                    AND detected_at >= ?
-                    AND reminded_at IS NULL
-                    """,
-                    (reminder_time, cutoff_time)
-                ) as cursor:
-                    cursor.row_factory = lambda c, r: dict(zip([col[0] for col in c.description], r))
-                    to_remind = await cursor.fetchall()
-                
-                for req in to_remind:
-                    remaining = timeout_min - self.REMINDER_AT_MINUTES
-                    for admin_id in ADMIN_IDS:
-                        try:
-                            await bot.send_message(
-                                chat_id=admin_id,
-                                text=(
-                                    f"⏰ <b>Напоминание!</b> Breaking News ID: {req['id']}\n"
-                                    f"❗ Осталось <b>{remaining} мин.</b> для одобрения или отклонения."
-                                ),
-                                parse_mode="HTML"
-                            )
-                        except Exception:
-                            pass
-                    # Помечаем что напомнили
-                    try:
-                        async with db.conn.execute(
-                            "UPDATE pending_breaking_news SET reminded_at = ? WHERE id = ?",
-                            (_sqlite_now(), req['id'])
-                        ):
-                            await db.conn.commit()
-                    except Exception:
-                        pass  # reminded_at может еще не существовать в БД
-                
         except Exception as e:
-            logger.error(f"❌ Ошибка handle_expired_requests: {e}", exc_info=True)
+            logger.error(f"❌ _expire_old_requests: {e}", exc_info=True)
+
+    async def _send_reminders(self, reminder_str: str, cutoff_str: str):
+        """
+        Отправляем напоминание если новость ждёт больше REMINDER_AT_MINUTES,
+        но ещё не истекла (между reminder_str и cutoff_str по detected_at).
+        
+        Условие: reminder_str > cutoff_str хронологически
+        (reminder_str = now-15мин, cutoff_str = now-30мин)
+        → ищем записи в окне [now-30мин, now-15мин]
+        """
+        try:
+            async with db.conn.execute(
+                """
+                SELECT id, news_url FROM pending_breaking_news
+                WHERE admin_decision = 'pending'
+                AND detected_at >= ?
+                AND detected_at < ?
+                AND reminded_at IS NULL
+                """,
+                (cutoff_str, reminder_str)
+            ) as cursor:
+                cursor.row_factory = lambda c, r: dict(zip([col[0] for col in c.description], r))
+                to_remind = await cursor.fetchall()
+
+            if not to_remind:
+                return
+
+            logger.info(f"⏰ Отправляю {len(to_remind)} напоминание(ий) о Breaking News")
+            timeout_min = int(await db.get_setting("moderation_timeout", str(self.AUTO_PUBLISH_TIMEOUT_MINUTES)))
+            remaining = timeout_min - self.REMINDER_AT_MINUTES
+
+            for req in to_remind:
+                for admin_id in ADMIN_IDS:
+                    try:
+                        await bot.send_message(
+                            chat_id=admin_id,
+                            text=(
+                                f"⏰ <b>Напоминание!</b> Breaking News ID: {req['id']}\n"
+                                f"❗ Осталось <b>{remaining} мин.</b> для одобрения или отклонения.\n"
+                                f"📄 URL: <code>{req['news_url'][:60]}</code>"
+                            ),
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        logger.debug(f"Не удалось уведомить админа {admin_id}: {e}")
+                # Помечаем что напомнили
+                try:
+                    await db.conn.execute(
+                        "UPDATE pending_breaking_news SET reminded_at = ? WHERE id = ?",
+                        (_sqlite_now(), req['id'])
+                    )
+                    await db.conn.commit()
+                except Exception as e:
+                    logger.warning(f"Не удалось обновить reminded_at для #{req['id']}: {e}")
+
+        except Exception as e:
+            logger.error(f"❌ _send_reminders: {e}", exc_info=True)
+
 
     async def _expire_request(self, request: Dict):
         """Пометить запрос как истекший и уведомить админов"""

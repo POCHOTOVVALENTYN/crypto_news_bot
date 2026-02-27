@@ -312,9 +312,24 @@ class NewsDatabase:
                                  admin_decision TEXT DEFAULT 'pending',
                                  published_at DATETIME DEFAULT NULL,
                                  auto_published BOOLEAN DEFAULT 0,
+                                 reminded_at DATETIME DEFAULT NULL,
+                                 last_error TEXT DEFAULT NULL,
                                  FOREIGN KEY (news_url) REFERENCES news(url)
                              )
                              """)
+            # Миграция: добавляем missing колонки для существующих БД (безопасен при повторе)
+            for col_def in [
+                ("reminded_at", "DATETIME DEFAULT NULL"),
+                ("last_error",  "TEXT DEFAULT NULL"),
+            ]:
+                try:
+                    await db.execute(
+                        f"ALTER TABLE pending_breaking_news ADD COLUMN {col_def[0]} {col_def[1]}"
+                    )
+                    logger.info(f"✅ Мигрирована колонка pending_breaking_news.{col_def[0]}")
+                except Exception:
+                    pass  # Колонка уже существует — это нормально
+
             
             # Таблица напоминаний о консультациях
             await db.execute("""

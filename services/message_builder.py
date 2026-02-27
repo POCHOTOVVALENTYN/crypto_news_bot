@@ -114,24 +114,19 @@ class AdvancedMessageFormatter:
         emoji = "🔥" if is_breaking else "⚡️"
         header = f"{emoji} <b>{clean_title_header.upper()}</b>"
         
-        # 2. Тело новости (summary или full_content если есть и не очень длинный)
+        # 2. Тело новости
+        # БАГ 5 ИСПРАВЛЕН: не перезаписываем summary полным full_content.
+        # summary уже прошёл через AI-рерайт, дедупликацию и перевод — он уже готов.
         content_text = summary
         
-        # Оценка overhead: заголовок (~80) + Ключевые моменты (~60 + N*100) + рыночные данные (~120) + футер (~130)
-        # Итого ~350-500 символов занято служебными блоками
+        # Оценка overhead для финального smart_truncate (если вдруг что-то прошло мимо AI)
         OVERHEAD_ESTIMATE = 400
-        # Если есть картинка: caption лимит 1024, запас на HTML теги → 950
-        # Если нет картинки: message лимит 4096, минус overhead → 3600
         if image_url:
-            max_caption_len = 950 - OVERHEAD_ESTIMATE  # ~550 для тела текста
-            max_caption_len = max(max_caption_len, 400)  # не меньше 400
+            max_caption_len = max(950 - OVERHEAD_ESTIMATE, 400)
         else:
-            max_caption_len = 3800 - OVERHEAD_ESTIMATE  # ~3400 для тела текста
+            max_caption_len = 3800 - OVERHEAD_ESTIMATE
         
-        if full_content and len(full_content) < max_caption_len:
-             content_text = full_content
-        
-        # Умный обрез контента по последнему предложению (не полусловен!)
+        # Умный обрез если текст всё ещё превышает лимит (fallback)
         if len(content_text) > max_caption_len:
             content_text = self._smart_truncate(content_text, max_caption_len)
              

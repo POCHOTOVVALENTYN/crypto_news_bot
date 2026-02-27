@@ -98,10 +98,10 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
     # Получаем полный текст (уже переведенный)
     full_content = news_item.get('full_content') or news_item.get('summary', '')
     
-    # Извлекаем ключевые моменты
+    # БАГ 4 ИСПРАВЛЕН: key_points для Breaking News убраны полностью — они дублируют тело текста.
+    # Для обычных новостей key_points оставяляем (дайджесты и др.)
     key_points = []
-    key_points_raw = []
-    if full_content and len(full_content) > 300:
+    if not is_breaking and full_content and len(full_content) > 300:
         try:
             from services.content_summarizer import ContentSummarizer
             key_points_raw = ContentSummarizer.extract_key_points(full_content)
@@ -117,7 +117,6 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
                         key_points.append(translated_point or point)
                     else:
                         key_points.append(point)
-            logger.info(f"✅ Извлечено {len(key_points)} ключевых моментов")
         except Exception as e:
             logger.error(f"❌ Ошибка извлечения ключевых моментов: {e}")
     
@@ -137,28 +136,36 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
     # =========================================================
     has_image = bool(news_item.get('image_url'))
     
-    # Собираем весь контент для оценки длины
-    raw_body = full_content or summary or ''
+    # БАГ 6 ИСПРАВЛЕН: raw_body = summary (уже переведённый, дедуплицированный)
+    # Не full_content — он может быть длиннее и не переведён
+    raw_body = summary or ''
     
-    # OVERHEAD: заголовок ~80 + ключевые моменты ~60+N*100 + цены/F&G ~120 + футер ~130 = ~400
+    # Лимиты для тела текста с учётом overhead (~400 симв: заголовок + цены + футер)
     OVERHEAD = 400
-    # Реальный доступный лимит для тела текста (с учётом форматирования)
-    if has_image:
-        body_limit = 950 - OVERHEAD  # caption лимит 1024 → ~550 для тела
-        body_limit = max(body_limit, 350)
-    else:
-        body_limit = 3800 - OVERHEAD  # message лимит 4096 → ~3400 для тела
+    body_limit = (950 - OVERHEAD) if has_image else (3800 - OVERHEAD)
+    body_limit = max(body_limit, 300)
     
-    # Рерайтим только если тело текста превышает доступный лимит
-    needs_rewrite = len(raw_body) > body_limit
+    # БАГ 6 ИСПРАВЛЕН: для Breaking News рерайт ВСЕГДА (не только при длинном тексте)
+    # Для обычных новостей — только при превышении лимита
+    needs_rewrite = is_breaking or (len(raw_body) > body_limit)
     
-    ai_rewritten_text: Optional[str] = None
-    if needs_rewrite:
+    if needs_rewrite and raw_body:
         try:
-            tone = "breaking" if is_breaking else "analysis"
+            # Выбираем тональность:
+            # "breaking" — срочно/факты (длинный текст)
+            # "enrich"   — дополнить контекстом (короткий текст)
+            # "analysis" — аналитически (обычные новости)
+            if is_breaking and len(raw_body) < 400:
+                tone = "enrich"
+            elif is_breaking:
+                tone = "breaking"
+            else:
+                tone = "analysis"
+            
+            target = body_limit if len(raw_body) > body_limit else min(len(raw_body) + 300, body_limit)
             logger.info(
-                f"🤖 Запускаю AI-рерайт: {len(raw_body)} симв → цель {body_limit} "
-                f"(фото={has_image}, breaking={is_breaking})"
+                f"🤖 AI-рерайт: {len(raw_body)} симв → цель ~{target} "
+                f"(тон={tone}, фото={has_image})"
             )
             news_analyzer = NewsAnalyzer()
             ai_rewritten_text = await news_analyzer.rewrite_for_telegram(
@@ -168,21 +175,20 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
                 tone=tone
             )
             if ai_rewritten_text:
-                # AI написал связный текст — используем его как summary
-                # key_points отключаем (они избыточны когда текст уже переписан)
                 summary = ai_rewritten_text
-                key_points = []  # AI уже всё включил в единый текст
-                logger.info(f"✅ AI-рерайт применён: итого {len(summary)} симв.")
+                key_points = []
+                logger.info(f"✅ AI-рерайт применён: {len(summary)} симв.")
             else:
-                # AI недоступен — smart_truncate как fallback
-                logger.warning("⚠️ AI-рерайт вернул None — применяю smart_truncate fallback")
+                logger.warning("⚠️ AI-рерайт вернул None — smart_truncate fallback")
                 from services.message_builder import AdvancedMessageFormatter as AMF
-                summary = AMF._smart_truncate(raw_body, body_limit)
+                if len(raw_body) > body_limit:
+                    summary = AMF._smart_truncate(raw_body, body_limit)
                 key_points = []
         except Exception as e:
-            logger.error(f"❌ Ошибка AI-рерайта: {e} — применяю fallback")
+            logger.error(f"❌ Ошибка AI-рерайта: {e}")
             from services.message_builder import AdvancedMessageFormatter as AMF
-            summary = AMF._smart_truncate(raw_body, body_limit)
+            if len(raw_body) > body_limit:
+                summary = AMF._smart_truncate(raw_body, body_limit)
             key_points = []
     # =========================================================
     
