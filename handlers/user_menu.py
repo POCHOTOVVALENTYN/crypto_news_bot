@@ -1,6 +1,6 @@
 import logging
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 
@@ -577,7 +577,33 @@ async def show_badges(message: Message):
     await message.answer(text, parse_mode="HTML", reply_markup=build_dismiss_keyboard("✅ Закрыть"))
 
 
+# === УНИВЕРСАЛЬНЫЙ DISMISS CALLBACK ===
+
+@router.callback_query(F.data == "dismiss_info_msg")
+async def dismiss_info_message(callback: CallbackQuery):
+    """Удаляет инфо-сообщение. Единый хендлер для всех 9 экранов."""
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data == "show_premium_purchase")
+async def cb_show_premium_purchase(callback: CallbackQuery):
+    """CTA-кнопка 'Получить Premium': закрывает инфо и подсказывает дальнейший шаг."""
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.answer(
+        "🌟 Нажмите '🌟 Получить Premium-доступ' в главном меню для оформления подписки.",
+        show_alert=True
+    )
+
+
 @router.message(F.text == "📸 Проверить Stories")
+
 async def check_stories_instruction(message: Message):
     """Инструкция по проверке Stories"""
     today_checks = await db.count_user_story_checks(message.from_user.id)
