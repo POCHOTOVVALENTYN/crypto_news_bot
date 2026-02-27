@@ -261,18 +261,29 @@ class BreakingNewsModerator:
                 await callback_query.answer("❌ Новость отклонена", show_alert=True)
                 await self._notify_other_admins(admin_id, pending_id, "отклонил")
             
-            # Редактируем сообщение с кнопками
-            if callback_query.message.photo:
-                await callback_query.message.edit_caption(
-                    caption=callback_query.message.caption + f"\n\n{'✅ ОДОБРЕНО' if decision == 'approved' else '❌ ОТКЛОНЕНО'} админом",
-                    parse_mode="HTML"
-                )
+            # Редактируем / удаляем сообщение с кнопками
+            if decision == 'approved':
+                # Одобрено — помечаем сообщение
+                try:
+                    if callback_query.message.photo:
+                        await callback_query.message.edit_caption(
+                            caption=callback_query.message.caption + "\n\n\u2705 \u041e\u0414\u041e\u0411\u0420\u0415\u041d\u041e \u0430\u0434\u043c\u0438\u043d\u043e\u043c",
+                            parse_mode="HTML"
+                        )
+                    else:
+                        await callback_query.message.edit_text(
+                            text=callback_query.message.text + "\n\n\u2705 \u041e\u0414\u041e\u0411\u0420\u0415\u041d\u041e \u0430\u0434\u043c\u0438\u043d\u043e\u043c",
+                            parse_mode="HTML"
+                        )
+                except Exception:
+                    pass
             else:
-                 await callback_query.message.edit_text(
-                    text=callback_query.message.text + f"\n\n{'✅ ОДОБРЕНО' if decision == 'approved' else '❌ ОТКЛОНЕНО'} админом",
-                    parse_mode="HTML"
+                # Отклонено — удаляем сообщение через 5 секунд
+                asyncio.create_task(
+                    self._delayed_delete_message(callback_query.message, delay=5)
                 )
             
+
         except Exception as e:
             logger.error(f"❌ Ошибка handle_admin_approval: {e}", exc_info=True)
             await callback_query.answer("⚠️ Ошибка обработки", show_alert=True)
@@ -303,21 +314,35 @@ class BreakingNewsModerator:
         except Exception as e:
             logger.error(f"❌ Ошибка публикации breaking news: {e}", exc_info=True)
     
+    async def _delayed_delete_message(self, message, delay: int = 5):
+        """Удалить сообщение через delay секунд"""
+        await asyncio.sleep(delay)
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
     async def _notify_other_admins(self, approving_admin_id: int, pending_id: int, action: str):
         """Уведомить других админов о принятом решении"""
         try:
             from config import ADMIN_NAMES
             admin_name = ADMIN_NAMES.get(approving_admin_id, f"Админ #{approving_admin_id}")
             
+            is_rejected = (action == "отклонил")
             notification_text = f"ℹ️ {admin_name} {action} breaking news (ID: {pending_id})"
             
             for admin_id in ADMIN_IDS:
                 if admin_id != approving_admin_id:
                     try:
-                        await bot.send_message(
+                        sent = await bot.send_message(
                             chat_id=admin_id,
                             text=notification_text
                         )
+                        # Если отклонено — уведомление удаляем через 10 секунд
+                        if is_rejected:
+                            asyncio.create_task(
+                                self._delayed_delete_message(sent, delay=10)
+                            )
                     except Exception as e:
                         logger.debug(f"Не удалось уведомить админа {admin_id}: {e}")
                         
