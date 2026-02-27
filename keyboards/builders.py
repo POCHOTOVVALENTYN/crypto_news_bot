@@ -37,3 +37,29 @@ def build_exit_ai_keyboard():
             callback_data="exit_ai_chat"
         )]
     ])
+
+
+def build_dismiss_keyboard(label: str = "✅ Понятно, спасибо!") -> InlineKeyboardMarkup:
+    """
+    Универсальная кнопка закрытия инфо-сообщения.
+    Единый callback dismiss_info_msg используется одним хендлером для всех экранов.
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=label, callback_data="dismiss_info_msg")
+    ]])
+
+
+def build_cta_dismiss_keyboard(
+    cta_text: str,
+    cta_data: str,
+    dismiss_label: str = "✅ Понятно!"
+) -> InlineKeyboardMarkup:
+    """
+    Клавиатура: CTA-кнопка (действие) + кнопка закрытия.
+    Используется на экранах где важно предложить следующий шаг.
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=cta_text, callback_data=cta_data)],
+        [InlineKeyboardButton(text=dismiss_label, callback_data="dismiss_info_msg")]
+    ])
+

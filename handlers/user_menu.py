@@ -7,6 +7,7 @@ from aiogram.filters import StateFilter
 from database import db
 from loader import bot
 from keyboards.reply import get_free_menu, get_premium_menu, get_giveaway_menu
+from keyboards.builders import build_dismiss_keyboard, build_cta_dismiss_keyboard
 from utils.message_cleaner import replace_screen, safe_delete, clear_last_screen
 
 router = Router()
@@ -42,7 +43,12 @@ async def show_premium_features(message: Message, state: FSMContext):
         "💰 <b>Стоимость:</b> от 700$ / месяц\n"
         "🎁 <b>Скидка 100$</b> при подписке на канал!\n\n"
         "Трансформируйте свой трейдинг!",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=build_cta_dismiss_keyboard(
+            cta_text="🌟 Получить Premium-доступ",
+            cta_data="show_premium_purchase",
+            dismiss_label="✅ Понятно, спасибо!"
+        )
     )
     await replace_screen(state, bot, new_msg)
 
@@ -62,7 +68,8 @@ async def show_resources(message: Message, state: FSMContext):
         "➡️ <a href=\"https://t.me/+514GO2tFjAtkMWRi\">ОТКРЫТЫЙ ЧАТ BLEXLER</a>\n\n"
         "Присоединяйтесь к нашему сообществу! 🚀",
         parse_mode="HTML",
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
+        reply_markup=build_dismiss_keyboard("✅ Закрыть")
     )
     await replace_screen(state, bot, new_msg)
 
@@ -79,9 +86,11 @@ async def show_author_info(message: Message, state: FSMContext):
         "💼 Специализация: Futures, Spot, DeFi\n"
         "🎯 Фокус: Технический анализ и риск-менеджмент\n\n"
         "Помогаю людям разобраться в криптовалютах и построить прибыльные стратегии",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=build_dismiss_keyboard("👍 Понятно!")
     )
     await replace_screen(state, bot, new_msg)
+
 
 
 
@@ -95,7 +104,8 @@ async def show_support(message: Message, state: FSMContext):
         "По всем вопросам обращайтесь:\n"
         "👤 @blexler\n\n"
         "Ответим в течение 24 часов! 😊",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=build_dismiss_keyboard("✅ Закрыть")
     )
     await replace_screen(state, bot, new_msg)
 
@@ -179,7 +189,8 @@ async def show_giveaway_rules(message: Message, state: FSMContext):
         "• Победители определяются по рейтингу XP\n"
         "• Следите за объявлениями в канале!\n\n"
         "💡 <b>Совет:</b> Комбинируйте все способы заработка XP для максимального результата!",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=build_dismiss_keyboard("✅ Всё ясно!")
     )
 
 
@@ -487,12 +498,15 @@ async def show_referrals(message: Message):
         "Приглашайте друзей через кнопку <b>📎 Пригласить друга</b>!"
     )
     
-    # Инлайн кнопка для получения бонуса если доступен
-    keyboard = None
+    # Инлайн клавиатура: бонус (+ дисмисс) или просто дисмисс
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     if bonus_info['eligible'] and not bonus_info['bonus_given']:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎁 Забрать Premium (12 дней)", callback_data="claim_ref_bonus")]
+            [InlineKeyboardButton(text="🎁 Забрать Premium (12 дней)", callback_data="claim_ref_bonus")],
+            [InlineKeyboardButton(text="✅ Закрыть", callback_data="dismiss_info_msg")]
         ])
+    else:
+        keyboard = build_dismiss_keyboard("✅ Закрыть")
     
     await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
@@ -530,9 +544,9 @@ async def show_leaderboard(message: Message):
         name = name.replace("<", "&lt;").replace(">", "&gt;")
         text += f"{medal} <b>{idx}. {name}</b> — {user['xp']} XP (Lvl {user['level']})\n"
     
-    text += f"\n👤 <b>Ваше место:</b> {user_rank if user_rank else 'N/A'}"
+    text += f"\n\n👤 <b>Ваше место:</b> {user_rank if user_rank else 'N/A'}"
     
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=build_dismiss_keyboard("✅ Закрыть"))
 
 
 @router.message(F.text == "🏅 Мои Достижения")
@@ -560,7 +574,8 @@ async def show_badges(message: Message):
             badge_name = BADGE_NAMES.get(badge, badge)
             text += f"✅ <b>{badge_name}</b>\n"
     
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=build_dismiss_keyboard("✅ Закрыть"))
+
 
 @router.message(F.text == "📸 Проверить Stories")
 async def check_stories_instruction(message: Message):
