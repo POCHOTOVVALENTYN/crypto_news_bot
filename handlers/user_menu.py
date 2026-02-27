@@ -7,6 +7,7 @@ from aiogram.filters import StateFilter
 from database import db
 from loader import bot
 from keyboards.reply import get_free_menu, get_premium_menu, get_giveaway_menu
+from utils.message_cleaner import replace_screen, safe_delete, clear_last_screen
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -18,7 +19,9 @@ logger = logging.getLogger(__name__)
 async def show_premium_features(message: Message, state: FSMContext):
     """Показать функции Premium"""
     await state.clear()
-    await message.answer(
+    # Удаляем сообщение-кнопку пользователя
+    await safe_delete(bot, message.chat.id, message.message_id)
+    new_msg = await message.answer(
         "💎 <b>PREMIUM-ПОДПИСКА</b>\n\n"
         "🎯 <b>Эксклюзивный доступ:</b>\n\n"
         "📊 <b>Premium-сигналы</b>\n"
@@ -41,13 +44,15 @@ async def show_premium_features(message: Message, state: FSMContext):
         "Трансформируйте свой трейдинг!",
         parse_mode="HTML"
     )
+    await replace_screen(state, bot, new_msg)
 
 
 @router.message(F.text == "📚 Наши ресурсы", StateFilter("*"))
 async def show_resources(message: Message, state: FSMContext):
     """Показать бесплатные ресурсы"""
     await state.clear()
-    await message.answer(
+    await safe_delete(bot, message.chat.id, message.message_id)
+    new_msg = await message.answer(
         "📚 <b>БЕСПЛАТНЫЕ РЕСУРСЫ</b>\n\n"
         "📰 <b>Основной канал</b>\n"
         "Мои мысли, аналитика и сигналы.\n"
@@ -59,13 +64,15 @@ async def show_resources(message: Message, state: FSMContext):
         parse_mode="HTML",
         disable_web_page_preview=True
     )
+    await replace_screen(state, bot, new_msg)
 
 
 @router.message(F.text == "👨‍💻 Об Авторе", StateFilter("*"))
 async def show_author_info(message: Message, state: FSMContext):
     """Информация об авторе"""
     await state.clear()
-    await message.answer(
+    await safe_delete(bot, message.chat.id, message.message_id)
+    new_msg = await message.answer(
         "👨‍💻 <b>Об Авторе</b>\n\n"
         "Евгений - профессиональный криптотрейдер и аналитик\n\n"
         "📈 Опыт торговли: 10+ лет\n"
@@ -74,19 +81,23 @@ async def show_author_info(message: Message, state: FSMContext):
         "Помогаю людям разобраться в криптовалютах и построить прибыльные стратегии",
         parse_mode="HTML"
     )
+    await replace_screen(state, bot, new_msg)
+
 
 
 @router.message(F.text == "📞 Поддержка", StateFilter("*"))
 async def show_support(message: Message, state: FSMContext):
     """Показать контакты поддержки"""
     await state.clear()
-    await message.answer(
+    await safe_delete(bot, message.chat.id, message.message_id)
+    new_msg = await message.answer(
         "📞 <b>Поддержка</b>\n\n"
         "По всем вопросам обращайтесь:\n"
         "👤 @blexler\n\n"
         "Ответим в течение 24 часов! 😊",
         parse_mode="HTML"
     )
+    await replace_screen(state, bot, new_msg)
 
 
 # === ПОДМЕНЮ РОЗЫГРЫША ===

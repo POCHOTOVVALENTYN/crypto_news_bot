@@ -17,6 +17,7 @@ from config import CONSULTATION_PRICES, ADMIN_NAMES, ADMIN_IDS, config
 from services.relay_manager import relay_manager
 from services.payment_manager import PaymentManager
 from utils.states import SupportState, ConsultationState, PriceNegotiationState
+from utils.message_cleaner import track_message, delete_tracked_messages, auto_delete, safe_delete
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -344,15 +345,20 @@ async def handle_support_message(message: Message, state: FSMContext):
         await state.clear()
         return
     
+    # Отслеживаем сообщение пользователя (при закрытии удалим)
+    await track_message(state, message.message_id)
+    
     # Пересылаем сообщение админу через Relay
     await relay_manager.relay_to_admin(session_id, message)
     
-    # Уведомляем пользователя
-    await message.answer(
+    # Уведомляем пользователя (удаляем через 10 сек — оно временное)
+    sent_msg = await message.answer(
         "✅ Сообщение отправлено поддержке.\n"
         "Ожидайте ответа...",
         parse_mode="HTML"
     )
+    import asyncio
+    asyncio.create_task(auto_delete(bot, sent_msg.chat.id, sent_msg.message_id, delay=10))
 
 
 # === PRICE NEGOTIATION RELAY ===
@@ -373,15 +379,22 @@ async def handle_price_negotiation_message(message: Message, state: FSMContext):
         await state.clear()
         return
     
+    # Отслеживаем сообщение пользователя (при закрытии удалим вместе с сессией)
+    await track_message(state, message.message_id)
+    
     # Пересылаем сообщение админу через Relay
     await relay_manager.relay_to_admin(session_id, message)
     
-    # Уведомляем пользователя
-    await message.answer(
+    # Уведомляем пользователя (временное — удалим через 10 сек)
+    sent_msg = await message.answer(
         "✅ Сообщение отправлено менеджеру.\n"
         "Ожидайте ответа...",
         parse_mode="HTML"
     )
+    import asyncio
+    asyncio.create_task(auto_delete(bot, sent_msg.chat.id, sent_msg.message_id, delay=10))
+
+
 
 
 # === ADMIN CALLBACKS ===
@@ -464,7 +477,9 @@ async def user_close_session(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Диалог завершен", callback_data="noop")]
         ]))
-        await callback.message.answer("✅ Диалог завершен. Спасибо за обращение!", parse_mode="HTML")
+        close_msg = await callback.message.answer("✅ Диалог завершен. Спасибо за обращение!", parse_mode="HTML")
+        import asyncio
+        asyncio.create_task(auto_delete(bot, close_msg.chat.id, close_msg.message_id, delay=15))
     except Exception:
         pass
     

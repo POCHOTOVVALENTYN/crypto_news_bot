@@ -1,10 +1,13 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
+import asyncio
 import logging
 
 from database import db
+from loader import bot
 from utils.states import UserState
+from utils.message_cleaner import auto_delete, safe_delete
 from keyboards.reply import get_premium_menu
 from keyboards.builders import build_exit_ai_keyboard
 from services.ai.manager import AIProviderManager
@@ -115,19 +118,21 @@ async def handle_ai_message(message: Message, state: FSMContext):
     user_requests = [t for t in user_requests if now - t < timedelta(minutes=1)]
     
     if len(user_requests) >= 10:
-        await message.answer(
+        rate_msg = await message.answer(
             "⏳ Пожалуйста, подождите немного перед следующим вопросом.\n"
             "Лимит: 10 запросов в минуту.",
             reply_markup=build_exit_ai_keyboard()
         )
+        asyncio.create_task(auto_delete(bot, rate_msg.chat.id, rate_msg.message_id, delay=20))
         logger.warning(f"⚠️ Rate limit hit for user {user_id}")
         return
     
     user_requests.append(now)
     user_last_requests[user_id] = user_requests
     
-    # Показываем что печатаем
+    # Показываем индикатор "Думаю..."
     await message.bot.send_chat_action(user_id, "typing")
+    thinking_msg = await message.answer("🤔 Анализирую...", reply_markup=None)
     
     try:
         # 💾 Получаем историю разговора
@@ -155,6 +160,8 @@ async def handle_ai_message(message: Message, state: FSMContext):
         )
         
         if response:
+            # Удаляем индикатор "Думаю..." перед самим ответом
+            await safe_delete(bot, message.chat.id, thinking_msg.message_id)
             # Добавляем ответ в историю
             history.append({"role": "assistant", "content": response})
             await state.update_data(chat_history=history)
@@ -167,13 +174,15 @@ async def handle_ai_message(message: Message, state: FSMContext):
             logger.debug(f"🤖 AI ответ отправлен: {user_id} (история: {len(history)} сообщений)")
         else:
             # AI не смог ответить
-            await message.answer(
+            await safe_delete(bot, message.chat.id, thinking_msg.message_id)
+            err_msg = await message.answer(
                 "⚠️ <b>AI временно недоступен</b>\n\n"
                 "Все провайдеры сейчас перегружены или недоступны.\n"
                 "Попробуйте задать вопрос чуть позже.",
                 parse_mode="HTML",
                 reply_markup=build_exit_ai_keyboard()
             )
+            asyncio.create_task(auto_delete(bot, err_msg.chat.id, err_msg.message_id, delay=20))
             logger.warning(f"⚠️ AI не смог ответить: {user_id}")
             
     except Exception as e:
