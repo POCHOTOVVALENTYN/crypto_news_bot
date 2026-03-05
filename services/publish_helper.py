@@ -140,9 +140,11 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
     # Не full_content — он может быть длиннее и не переведён
     raw_body = summary or ''
     
-    # Лимиты для тела текста с учётом overhead (~400 симв: заголовок + цены + футер)
-    OVERHEAD = 400
-    body_limit = (950 - OVERHEAD) if has_image else (3800 - OVERHEAD)
+    # Лимиты для тела с учётом overhead (~300 симв: заголовк+цены+футер).
+    # caption (1024 симв Telegram) = 600 body + 300 overhead + 124 запас
+    # message (4096 симв Telegram) = 3000 body + 300 overhead + 796 запас
+    OVERHEAD = 300
+    body_limit = (1024 - OVERHEAD - 124) if has_image else (4096 - OVERHEAD - 796)
     body_limit = max(body_limit, 300)
     
     # БАГ 6 ИСПРАВЛЕН: для Breaking News рерайт ВСЕГДА (не только при длинном тексте)
@@ -237,23 +239,38 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
 
 
 
-async def publish_single_news(news_item: Dict, is_breaking: bool = False):
+async def publish_single_news(news_item: Dict, is_breaking: bool = False, pending_id: int = None):
     """
-    Публикует одну новость в канал
+    Публикует одну новость в канал.
     
     Args:
         news_item: Словарь с данными новости из БД
-        is_breaking: Флаг breaking news (для логирования)
+        is_breaking: Флаг breaking news
+        pending_id: ID записи в pending_breaking_news (для WYSIWYG)
     """
     try:
         logger.info(f"🚀 Публикация{'🔥 BREAKING' if is_breaking else ''}: {news_item['title'][:50]}")
         
-        # Подготавливаем данные через единый pipeline (тот же что для превью)
-        msg_data = await prepare_news_for_publish(news_item, is_breaking=is_breaking)
+        # ✅ WYSIWYG: для breaking news берём уже подготовленный текст из БД
+        msg_data = None
+        if is_breaking and pending_id:
+            try:
+                async with db.conn.execute(
+                    "SELECT prepared_text, prepared_image_url FROM pending_breaking_news WHERE id = ?",
+                    (pending_id,)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                if row and row[0]:
+                    msg_data = {'text': row[0], 'image_url': row[1]}
+                    logger.info(f"✅ WYSIWYG: текст из БД ({len(row[0])} симв)")
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось прочитать prepared_text: {e}")
         
-        # (metadata processing теперь внутри prepare_news_for_publish)
+        # Fallback: если нет prepared_text — готовим заново
+        if msg_data is None:
+            msg_data = await prepare_news_for_publish(news_item, is_breaking=is_breaking)
         
-
+        
         
         # БАГ 3 ИСПРАВЛЕН: InlineKeyboardMarkup вместо dict (Telegram не принимает dict)
         channel_builder = InlineKeyboardBuilder()

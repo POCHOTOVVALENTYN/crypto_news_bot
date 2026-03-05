@@ -120,35 +120,52 @@ class BreakingNewsModerator:
             
             logger.info(f"📋 Создан запрос на модерацию #{pending_id} для: {news_item['title'][:50]}")
             
-            # Отправляем всем админам, сохраняя msg_id
+            # ✅ WYSIWYG: готовим текст ОДИН РАЗ для всех admin + публикации
+            from services.publish_helper import prepare_news_for_publish
+            news_copy = dict(news_item)
+            preview_data = await prepare_news_for_publish(news_copy, is_breaking=True)
+            logger.info(f"✅ Текст подготовлен ({len(preview_data.get('text',''))} симв), будет использован и для публикации")
+            
+            # Отправляем всем админам (передаём уже готовый текст)
             admin_msg_ids: Dict[int, int] = {}
             for admin_id in ADMIN_IDS:
-                msg_id = await self._send_admin_notification(admin_id, news_item, pending_id)
+                msg_id = await self._send_admin_notification(admin_id, news_item, pending_id, preview_data=preview_data)
                 if msg_id:
                     admin_msg_ids[admin_id] = msg_id
             
-            # Сохраняем соответствие admin_id ⇒ msg_id в БД
-            if admin_msg_ids:
-                import json
+            # Сохраняем в БД: msg_id у каждого admin + готовый текст (WYSIWYG)
+            import json
+            update_data = {
+                'admin_messages': json.dumps(admin_msg_ids) if admin_msg_ids else None,
+                'prepared_text': preview_data.get('text'),
+                'prepared_image_url': preview_data.get('image_url'),
+            }
+            # Убираем None-поля
+            update_data = {k: v for k, v in update_data.items() if v is not None}
+            if update_data:
+                set_clause = ", ".join(f"{k} = ?" for k in update_data)
                 await db.conn.execute(
-                    "UPDATE pending_breaking_news SET admin_messages = ? WHERE id = ?",
-                    (json.dumps(admin_msg_ids), pending_id)
+                    f"UPDATE pending_breaking_news SET {set_clause} WHERE id = ?",
+                    (*update_data.values(), pending_id)
                 )
                 await db.conn.commit()
                 
         except Exception as e:
             logger.error(f"❌ Ошибка создания запроса на модерацию: {e}", exc_info=True)
     
-    async def _send_admin_notification(self, admin_id: int, news_item: Dict, pending_id: int) -> Optional[int]:
-        """БАГ 1 ИСПРАВЛЕН: WYSIWYG-превью = полный pipeline публикации
+    async def _send_admin_notification(self, admin_id: int, news_item: Dict, pending_id: int,
+                                          preview_data: Optional[Dict] = None) -> Optional[int]:
+        """WYSIWYG: превью у администратора = финальная публикация в канале.
         
-        Returns: message_id отправленного сообщения (для хранения в БД)
+        Args:
+            preview_data: Если уже рассчитан (первый администратор), для последующих передаём готовый.
+        Returns: message_id отправленного сообщения
         """
         try:
-            from services.publish_helper import prepare_news_for_publish
-            
-            news_copy = dict(news_item)
-            preview_data = await prepare_news_for_publish(news_copy, is_breaking=True)
+            if preview_data is None:
+                from services.publish_helper import prepare_news_for_publish
+                news_copy = dict(news_item)
+                preview_data = await prepare_news_for_publish(news_copy, is_breaking=True)
             
             timeout_min = await db.get_setting("moderation_timeout", str(self.AUTO_PUBLISH_TIMEOUT_MINUTES))
             try:
@@ -265,7 +282,7 @@ class BreakingNewsModerator:
                 await callback_query.answer("✅ Новость одобрена! Публикую...", show_alert=True)
                 
                 # Публикуем немедленно
-                await self._publish_breaking_news(pending['news_url'])
+                await self._publish_breaking_news(pending['news_url'], pending_id=pending_id)
                 await self._notify_other_admins_of_decision(admin_id, pending_id, pending, decision="approved")
                 
             else:  # rejected
@@ -299,10 +316,9 @@ class BreakingNewsModerator:
             logger.error(f"❌ Ошибка handle_admin_approval: {e}", exc_info=True)
             await callback_query.answer("⚠️ Ошибка обработки", show_alert=True)
     
-    async def _publish_breaking_news(self, news_url: str):
+    async def _publish_breaking_news(self, news_url: str, pending_id: int = None):
         """Немедленная публикация breaking news"""
         try:
-            # Импортируем функцию публикации
             from services.publish_helper import publish_single_news
             
             # Получаем новость
@@ -317,8 +333,8 @@ class BreakingNewsModerator:
                 logger.error(f"❌ Новость не найдена: {news_url}")
                 return
             
-            # Публикуем
-            await publish_single_news(news_item, is_breaking=True)
+            # Публикуем с pending_id для WYSIWYG
+            await publish_single_news(news_item, is_breaking=True, pending_id=pending_id)
             
             logger.info(f"🔥 Breaking news опубликована: {news_item['title'][:50]}")
             

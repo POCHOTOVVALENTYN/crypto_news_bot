@@ -105,10 +105,10 @@ class AdvancedMessageFormatter:
         # 1. Заголовок
         # Исправление 1: берём только ПЕРВУЮ строку title (источник может давать многострочный title)
         title_first_line = title.split('\n')[0].strip()
-        # Исправление 1б: сначала удаляем URL целиком (http[s]://...), потом артефакты
+        # Удаляем URL целиком (http[s]://...), потом артефакты
         title_no_url = re.sub(r'https?://\S+', '', title_first_line).strip()
-        clean_title_header = re.sub(r'[^\w\s\.,!\?\-]', '', title_no_url).strip()
-        # Если после очистки заголовок пустой — запасной вариант
+        # БАГ 7 ИСПРАВЛЕН: добавлены $%/# (важны для крипто-текста: BTC/%)
+        clean_title_header = re.sub(r'[^\w\s\.,!\?\-\$\%\/\#\@]', '', title_no_url).strip()
         if not clean_title_header:
             clean_title_header = re.sub(r'[^\w\s]', '', title_no_url).strip() or "Breaking News"
         emoji = "🔥" if is_breaking else "⚡️"
@@ -133,8 +133,8 @@ class AdvancedMessageFormatter:
         # Очистка текста
         content_text = self.clean_text(content_text)
 
-        # Исправление 3: улучшенная дедупликация по проценту совпадения слов
-        # Убираем строки, где >60% слов совпадают с заголовком
+        # БАГ 5 ИСПРАВЛЕН: для breaking_news порог повышен до 0.85 (чтобы не удалять короткие факты)
+        dedup_threshold = 0.85 if is_breaking else 0.6
         norm_title_words = set(re.sub(r'[^\w]', ' ', title_first_line.lower()).split())
         if norm_title_words:
             filtered_lines = []
@@ -142,7 +142,7 @@ class AdvancedMessageFormatter:
                 norm_line_words = set(re.sub(r'[^\w]', ' ', line.lower()).split())
                 if norm_line_words:
                     overlap = len(norm_title_words & norm_line_words) / len(norm_title_words)
-                    if overlap > 0.6:  # Строка — это дубль заголовка
+                    if overlap > dedup_threshold:
                         continue
                 filtered_lines.append(line)
             content_text = '\n'.join(filtered_lines).strip()
@@ -310,8 +310,11 @@ class AdvancedMessageFormatter:
         for line in text.split('\n'):
             line = line.strip()
             # Удаляем повторяющиеся спецсимволы и разделители
-            line = re.sub(r'^[\*\_\-\=\#\s]+', '', line) # В начале строки
-            line = re.sub(r'[\*\_\-\=\#\s]+$', '', line) # В конце строки
+            # БАГ 4 ИСПРАВЛЕН: удаляем спецсимволы в начале/конце строки,
+            # но не если после '-' сразу идёт буква (это AI bullet-point)
+            line = re.sub(r'^[\*\_\=\#\s]+', '', line)  # не удаляем '-' из начала
+            line = re.sub(r'^\-(?!\s*\w)', '', line)    # удаляем '-' только если за ним не буква
+            line = re.sub(r'[\*\_\=\#\s]+$', '', line)  # конец строки
             
             # Удаляем разделители типа ➖➖➖
             if re.match(r'^[➖\-_=]{3,}$', line):
@@ -360,27 +363,18 @@ class RichMediaMessage:
     async def send(self, bot, chat_id: int):
         try:
             if self.image_url:
-                # БАГ 2 ИСПРАВЛЕН: проверяем URL и логируем ошибку отправки фото
                 if not isinstance(self.image_url, str) or not self.image_url.startswith('http'):
                     logging.getLogger(__name__).warning(
-                        f"⚠️ Невалидный image_url (?пропустим фото): {repr(self.image_url)[:80]}"
+                        f"⚠️ Невалидный image_url: {repr(self.image_url)[:80]}"
                     )
                 else:
-                    try:
-                        return await bot.send_photo(
-                            chat_id=chat_id,
-                            photo=self.image_url,
-                            caption=self.text,
-                            parse_mode="HTML",
-                            reply_markup=self.reply_markup
-                        )
-                    except Exception as e:
-                        # БАГ 2: теперь логируем ошибку — раньше она поглощалась молча!
-                        logging.getLogger(__name__).error(
-                            f"❌ Ошибка отправки фото (отправляю текстом): {e} | URL: {self.image_url[:80]}"
-                        )
+                    # БАГ 3 ИСПРАВЛЕН: image proxy — скачиваем и отправляем как FSInputFile
+                    # Это обходит 403 Forbidden от CDN при hotlinking
+                    sent = await self._try_send_photo(bot, chat_id)
+                    if sent:
+                        return sent
             
-            # Fallback к текстовому сообщению
+            # Fallback к текстовому сообщению (без фото)
             return await bot.send_message(
                 chat_id=chat_id,
                 text=self.text,
@@ -391,6 +385,66 @@ class RichMediaMessage:
         except Exception as e:
             logging.getLogger(__name__).error(f"Failed to send message: {e}")
             return None
+
+    async def _try_send_photo(self, bot, chat_id: int):
+        """Попытка отправить фото: сначала прямой URL, потом через скачивание."""
+        import aiohttp, os, tempfile
+        _log = logging.getLogger(__name__)
+        
+        # Попытка 1: прямой URL
+        try:
+            return await bot.send_photo(
+                chat_id=chat_id,
+                photo=self.image_url,
+                caption=self.text,
+                parse_mode="HTML",
+                reply_markup=self.reply_markup
+            )
+        except Exception as e1:
+            _log.warning(f"⚠️ Прямой URL отклонён ({type(e1).__name__}), пробую скачать: {self.image_url[:80]}")
+        
+        # Попытка 2: скачать → FSInputFile
+        try:
+            from aiogram.types import FSInputFile
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (compatible; TelegramBot/1.0)',
+                'Accept': 'image/webp,image/png,image/jpeg,*/*'
+            }
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(self.image_url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=True) as resp:
+                    if resp.status == 200:
+                        content_type = resp.headers.get('Content-Type', 'image/jpeg')
+                        ext = '.jpg' if 'jpeg' in content_type else '.png' if 'png' in content_type else '.webp'
+                        data = await resp.read()
+                        if len(data) < 512:  # слишком мал — точно не изображение
+                            raise ValueError(f"Слишком маленький файл ({len(data)} bytes)")
+                        
+                        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                            tmp.write(data)
+                            tmp_path = tmp.name
+                        
+                        try:
+                            result = await bot.send_photo(
+                                chat_id=chat_id,
+                                photo=FSInputFile(tmp_path),
+                                caption=self.text,
+                                parse_mode="HTML",
+                                reply_markup=self.reply_markup
+                            )
+                            _log.info(f"✅ Фото отправлено через скачивание ({len(data)} байт)")
+                            return result
+                        finally:
+                            try:
+                                os.unlink(tmp_path)
+                            except Exception:
+                                pass
+                    else:
+                        _log.warning(f"⚠️ HTTP {resp.status} при скачивании фото")
+        except Exception as e2:
+            _log.error(f"❌ Не удалось отправить фото через скачивание: {e2} | URL: {self.image_url[:80]}")
+        
+        return None  # Оба способа не сработали → fallback к тексту
+
 
 class FearGreedIndexTracker:
     """Tracker for Fear & Greed Index"""

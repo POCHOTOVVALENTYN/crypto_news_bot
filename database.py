@@ -314,6 +314,8 @@ class NewsDatabase:
                                  auto_published BOOLEAN DEFAULT 0,
                                  reminded_at DATETIME DEFAULT NULL,
                                  last_error TEXT DEFAULT NULL,
+                                 prepared_text TEXT DEFAULT NULL,
+                                 prepared_image_url TEXT DEFAULT NULL,
                                  FOREIGN KEY (news_url) REFERENCES news(url)
                              )
                              """)
@@ -321,7 +323,9 @@ class NewsDatabase:
             for col_def in [
                 ("reminded_at",    "DATETIME DEFAULT NULL"),
                 ("last_error",     "TEXT DEFAULT NULL"),
-                ("admin_messages", "TEXT DEFAULT NULL"),
+                ("admin_messages",       "TEXT DEFAULT NULL"),
+                ("prepared_text",        "TEXT DEFAULT NULL"),
+                ("prepared_image_url",   "TEXT DEFAULT NULL"),
             ]:
                 try:
                     await db.execute(
