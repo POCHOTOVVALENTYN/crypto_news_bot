@@ -326,6 +326,7 @@ class NewsDatabase:
                 ("admin_messages",       "TEXT DEFAULT NULL"),
                 ("prepared_text",        "TEXT DEFAULT NULL"),
                 ("prepared_image_url",   "TEXT DEFAULT NULL"),
+                ("reminder_messages",    "TEXT DEFAULT NULL"),
             ]:
                 try:
                     await db.execute(

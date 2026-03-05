@@ -277,36 +277,34 @@ class BreakingNewsModerator:
             
             logger.info(f"✅ Админ {admin_id} принял решение: {decision} (pending #{pending_id})")
             
-            # Уведомляем админа
+            # Уведомляем и публикуем
             if decision == 'approved':
                 await callback_query.answer("✅ Новость одобрена! Публикую...", show_alert=True)
-                
-                # Публикуем немедленно
                 await self._publish_breaking_news(pending['news_url'], pending_id=pending_id)
                 await self._notify_other_admins_of_decision(admin_id, pending_id, pending, decision="approved")
-                
             else:  # rejected
                 await callback_query.answer("❌ Новость отклонена", show_alert=True)
                 await self._notify_other_admins_of_decision(admin_id, pending_id, pending, decision="rejected")
             
-            # Редактируем / удаляем сообщение с кнопками
+            # Удаляем reminder-сообщения у всех сразу (они уже неактуальны)
+            asyncio.create_task(self._delete_reminder_messages(pending, delay=1))
+            
+            # Редактируем / удаляем оригинальное сообщение модерации
             if decision == 'approved':
-                # Одобрено — помечаем сообщение
                 try:
                     if callback_query.message.photo:
                         await callback_query.message.edit_caption(
-                            caption=callback_query.message.caption + "\n\n\u2705 \u041e\u0414\u041e\u0411\u0420\u0415\u041d\u041e \u0430\u0434\u043c\u0438\u043d\u043e\u043c",
+                            caption=callback_query.message.caption + "\n\n✅ ОДОБРЕНО админом",
                             parse_mode="HTML"
                         )
                     else:
                         await callback_query.message.edit_text(
-                            text=callback_query.message.text + "\n\n\u2705 \u041e\u0414\u041e\u0411\u0420\u0415\u041d\u041e \u0430\u0434\u043c\u0438\u043d\u043e\u043c",
+                            text=callback_query.message.text + "\n\n✅ ОДОБРЕНО админом",
                             parse_mode="HTML"
                         )
                 except Exception:
                     pass
             else:
-                # Отклонено — удаляем сообщение через 5 секунд
                 asyncio.create_task(
                     self._delayed_delete_message(callback_query.message, delay=5)
                 )
@@ -356,6 +354,25 @@ class BreakingNewsModerator:
             await bot.delete_message(chat_id=chat_id, message_id=message_id)
         except Exception:
             pass
+
+    async def _delete_reminder_messages(self, pending: Dict, delay: int = 0):
+        """Удалить reminder-сообщения у всех админов.
+        Вызывается после любого решения (approved/rejected/expired)."""
+        import json
+        if delay:
+            await asyncio.sleep(delay)
+        raw = pending.get('reminder_messages')
+        if not raw:
+            return
+        try:
+            reminder_messages = {int(k): int(v) for k, v in json.loads(raw).items()}
+        except Exception:
+            return
+        for chat_id, msg_id in reminder_messages.items():
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception:
+                pass
 
     async def _notify_other_admins_of_decision(
         self,
@@ -486,21 +503,21 @@ class BreakingNewsModerator:
 
     async def _send_reminders(self, reminder_str: str, cutoff_str: str):
         """
-        Отправляем напоминание если новость ждёт больше REMINDER_AT_MINUTES,
-        но ещё не истекла (между reminder_str и cutoff_str по detected_at).
-        
-        Условие: reminder_str > cutoff_str хронологически
-        (reminder_str = now-15мин, cutoff_str = now-30мин)
-        → ищем записи в окне [now-30мин, now-15мин]
+        Rich reminder: заголовок новости + кнопку «К сообщению» + кнопки approve/reject.
+        Сохраняет reminder_messages в БД для последующего удаления при решении.
         """
         try:
+            # Загружаем pending + admin_messages + заголовок новости за один запрос
             async with db.conn.execute(
                 """
-                SELECT id, news_url FROM pending_breaking_news
-                WHERE admin_decision = 'pending'
-                AND detected_at >= ?
-                AND detected_at < ?
-                AND reminded_at IS NULL
+                SELECT pbn.id, pbn.news_url, pbn.admin_messages,
+                       n.title
+                FROM pending_breaking_news pbn
+                LEFT JOIN news n ON n.url = pbn.news_url
+                WHERE pbn.admin_decision = 'pending'
+                AND pbn.detected_at >= ?
+                AND pbn.detected_at < ?
+                AND pbn.reminded_at IS NULL
                 """,
                 (cutoff_str, reminder_str)
             ) as cursor:
@@ -510,53 +527,88 @@ class BreakingNewsModerator:
             if not to_remind:
                 return
 
-            logger.info(f"⏰ Отправляю {len(to_remind)} напоминание(ий) о Breaking News")
+            logger.info(f"⏰ Отправляю {len(to_remind)} напоминание(й) о Breaking News")
             timeout_min = int(await db.get_setting("moderation_timeout", str(self.AUTO_PUBLISH_TIMEOUT_MINUTES)))
             remaining = timeout_min - self.REMINDER_AT_MINUTES
 
+            import json
             for req in to_remind:
-                # Формируем кнопки для быстрого решения прямо из напоминания
-                reminder_builder = InlineKeyboardBuilder()
-                reminder_builder.button(
-                    text="✅ Опубликовать", callback_data=f"breaking_approve:{req['id']}"
-                )
-                reminder_builder.button(
-                    text="❌ Отклонить", callback_data=f"breaking_reject:{req['id']}"
-                )
-                reminder_builder.adjust(2)
-                reminder_markup = reminder_builder.as_markup()
+                # Формат заголовка: из news.title или fallback на URL
+                news_title = req.get('title') or ''
+                if news_title:
+                    # Берём первую строку, max 80 символов
+                    display_title = news_title.split('\n')[0][:80].upper()
+                else:
+                    display_title = req['news_url'][:60]
+
+                # Парсим admin_messages для deep link
+                admin_messages: Dict[int, int] = {}
+                raw = req.get('admin_messages')
+                if raw:
+                    try:
+                        admin_messages = {int(k): int(v) for k, v in json.loads(raw).items()}
+                    except Exception:
+                        pass
+
+                reminder_msg_ids: Dict[int, int] = {}
 
                 for admin_id in ADMIN_IDS:
                     try:
-                        await bot.send_message(
+                        # Кнопки: approve / reject / ссылка на оригинальное сообщение
+                        reminder_builder = InlineKeyboardBuilder()
+                        reminder_builder.button(
+                            text="✅ Опубликовать", callback_data=f"breaking_approve:{req['id']}"
+                        )
+                        reminder_builder.button(
+                            text="❌ Отклонить", callback_data=f"breaking_reject:{req['id']}"
+                        )
+                        reminder_builder.adjust(2)
+
+                        # Deep link на оригинальное сообщение (работает для personal бота)
+                        orig_msg_id = admin_messages.get(admin_id)
+                        if orig_msg_id:
+                            # tg://openmessage?user_id=XXX&message_id=YYY — универсальный deep link
+                            deep_link = f"tg://openmessage?user_id={admin_id}&message_id={orig_msg_id}"
+                            reminder_builder.row()
+                            reminder_builder.button(text="↗️ К сообщению модерации", url=deep_link)
+
+                        reminder_markup = reminder_builder.as_markup()
+
+                        sent = await bot.send_message(
                             chat_id=admin_id,
                             text=(
-                                f"⏰ <b>Напоминание о Breaking News!</b>\n"
-                                f"ID: {req['id']} — осталось <b>{remaining} мин.</b>\n"
-                                f"📄 <code>{req['news_url'][:60]}</code>\n\n"
-                                f"Примите решение:"
+                                f"⏰ <b>Напоминание о Breaking News!</b>\n\n"
+                                f"📰 <b>{display_title}</b>\n\n"
+                                f"⏳ Осталось: <b>{remaining} мин.</b> для принятия решения.\n"
+                                f"После этого новость будет автоматически отменена."
                             ),
                             parse_mode="HTML",
                             reply_markup=reminder_markup
                         )
+                        if sent:
+                            reminder_msg_ids[admin_id] = sent.message_id
                     except Exception as e:
-                        logger.debug(f"Не удалось уведомить админа {admin_id}: {e}")
-                # Помечаем что напомнили
+                        logger.debug(f"Не удалось отправить reminder админу {admin_id}: {e}")
+
+                # Сохраняем reminder_messages и reminded_at
                 try:
                     await db.conn.execute(
-                        "UPDATE pending_breaking_news SET reminded_at = ? WHERE id = ?",
-                        (_sqlite_now(), req['id'])
+                        """UPDATE pending_breaking_news
+                           SET reminded_at = ?, reminder_messages = ?
+                           WHERE id = ?""",
+                        (_sqlite_now(), json.dumps(reminder_msg_ids) if reminder_msg_ids else None, req['id'])
                     )
                     await db.conn.commit()
                 except Exception as e:
-                    logger.warning(f"Не удалось обновить reminded_at для #{req['id']}: {e}")
+                    logger.warning(f"Не удалось обновить reminded_at/reminder_messages для #{req['id']}: {e}")
 
         except Exception as e:
             logger.error(f"❌ _send_reminders: {e}", exc_info=True)
 
 
     async def _expire_request(self, request: Dict):
-        """Пометить запрос как истекший и уведомить админов"""
+        """Пометить запрос как истекший, удалить все сообщения админов"""
+        import json
         try:
             pending_id = request['id']
             news_url = request['news_url']
@@ -572,7 +624,7 @@ class BreakingNewsModerator:
             ) as cursor:
                 await db.conn.commit()
 
-            # ✅ НОВОЕ: Помечаем новость как пропущенную в основной таблице (2 = skipped)
+            # Помечаем новость как пропущенную (2 = skipped)
             async with db.conn.execute(
                 "UPDATE news SET posted_to_telegram = 2 WHERE url = ?",
                 (news_url,)
@@ -581,14 +633,33 @@ class BreakingNewsModerator:
             
             logger.info(f"⏳ Breaking news истекла (таймаут {self.AUTO_PUBLISH_TIMEOUT_MINUTES} мин): {news_url}")
             
-            # Уведомляем админов
+            # Удаляем ремайндеры сразу
+            asyncio.create_task(self._delete_reminder_messages(request, delay=0))
+            
+            # Удаляем оригинальные сообщения модерации через 10 секунд
+            raw_admin = request.get('admin_messages')
+            if raw_admin:
+                try:
+                    admin_msgs = {int(k): int(v) for k, v in json.loads(raw_admin).items()}
+                    for chat_id, msg_id in admin_msgs.items():
+                        asyncio.create_task(self._delayed_delete_by_id(chat_id, msg_id, delay=10))
+                except Exception:
+                    pass
+            
+            # Отправляем уведомление админам → авто-удаление через 60 сек
             for admin_id in ADMIN_IDS:
                 try:
-                    await bot.send_message(
+                    sent = await bot.send_message(
                         chat_id=admin_id,
-                        text=f"⏳ <b>Время истекло</b>\nBreaking news ID: {pending_id} <b>ОТМЕНЕНА</b> (нет реакции админов).",
+                        text=(
+                            f"⏳ <b>Время истекло</b>\n"
+                            f"Breaking news <b>ID: {pending_id}</b> отменена — никто не отреагировал.\n"
+                            f"<i>Сообщение удалится через 1 мин.</i>"
+                        ),
                         parse_mode="HTML"
                     )
+                    # Авто-удаление expired-уведомления через 60 сек
+                    asyncio.create_task(self._delayed_delete_message(sent, delay=60))
                 except Exception as e:
                     logger.debug(f"Не удалось уведомить админа {admin_id}: {e}")
                     
