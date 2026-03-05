@@ -255,30 +255,15 @@ async def publish_single_news(news_item: Dict, is_breaking: bool = False):
         
 
         
-        # Custom Buttons with Color Styles (Raw JSON)
-        # aiogram does not support 'style' in inline keyboard buttons yet
-        reply_markup_dict = {
-            "inline_keyboard": [
-                [
-                    {
-                        "text": "💬 Открытый общий чат",
-                        "url": "https://t.me/+514GO2tFjAtkMWRi",
-                        "style": "primary" # Blue button
-                    }
-                ],
-                [
-                    {
-                        "text": "📢 Подписаться",
-                        "url": "https://t.me/blexler_invest",
-                        "style": "success" # Green button
-                    }
-                ]
-            ]
-        }
+        # БАГ 3 ИСПРАВЛЕН: InlineKeyboardMarkup вместо dict (Telegram не принимает dict)
+        channel_builder = InlineKeyboardBuilder()
+        channel_builder.button(text="💬 Открытый общий чат", url="https://t.me/+514GO2tFjAtkMWRi")
+        channel_builder.button(text="📢 Подписаться на канал", url="https://t.me/blexler_invest")
+        channel_builder.adjust(1)
+        channel_markup = channel_builder.as_markup()
         
         # Публикуем
-        # Используем reply_markup_dict напрямую
-        rich_msg = RichMediaMessage(msg_data['text'], msg_data['image_url'], reply_markup=reply_markup_dict)
+        rich_msg = RichMediaMessage(msg_data['text'], msg_data['image_url'], reply_markup=channel_markup)
         sent_message = await rich_msg.send(bot, config.telegram_channel_id)
         
         if sent_message:

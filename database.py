@@ -319,8 +319,9 @@ class NewsDatabase:
                              """)
             # Миграция: добавляем missing колонки для существующих БД (безопасен при повторе)
             for col_def in [
-                ("reminded_at", "DATETIME DEFAULT NULL"),
-                ("last_error",  "TEXT DEFAULT NULL"),
+                ("reminded_at",    "DATETIME DEFAULT NULL"),
+                ("last_error",     "TEXT DEFAULT NULL"),
+                ("admin_messages", "TEXT DEFAULT NULL"),
             ]:
                 try:
                     await db.execute(

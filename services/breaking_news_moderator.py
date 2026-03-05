@@ -120,24 +120,36 @@ class BreakingNewsModerator:
             
             logger.info(f"📋 Создан запрос на модерацию #{pending_id} для: {news_item['title'][:50]}")
             
-            # Отправляем всем админам
+            # Отправляем всем админам, сохраняя msg_id
+            admin_msg_ids: Dict[int, int] = {}
             for admin_id in ADMIN_IDS:
-                await self._send_admin_notification(admin_id, news_item, pending_id)
+                msg_id = await self._send_admin_notification(admin_id, news_item, pending_id)
+                if msg_id:
+                    admin_msg_ids[admin_id] = msg_id
+            
+            # Сохраняем соответствие admin_id ⇒ msg_id в БД
+            if admin_msg_ids:
+                import json
+                await db.conn.execute(
+                    "UPDATE pending_breaking_news SET admin_messages = ? WHERE id = ?",
+                    (json.dumps(admin_msg_ids), pending_id)
+                )
+                await db.conn.commit()
                 
         except Exception as e:
             logger.error(f"❌ Ошибка создания запроса на модерацию: {e}", exc_info=True)
     
-    async def _send_admin_notification(self, admin_id: int, news_item: Dict, pending_id: int):
-        """БАГ 1 ИСПРАВЛЕН: WYSIWYG-превью = полный pipeline публикации"""
+    async def _send_admin_notification(self, admin_id: int, news_item: Dict, pending_id: int) -> Optional[int]:
+        """БАГ 1 ИСПРАВЛЕН: WYSIWYG-превью = полный pipeline публикации
+        
+        Returns: message_id отправленного сообщения (для хранения в БД)
+        """
         try:
-            # Импортируем функцию подготовки из publish_helper — тот же pipeline, что и при публикации
             from services.publish_helper import prepare_news_for_publish
             
-            # Полная подготовка: перевод, key_points, дедупликация, цены
-            news_copy = dict(news_item)  # не меняем оригинал
+            news_copy = dict(news_item)
             preview_data = await prepare_news_for_publish(news_copy, is_breaking=True)
             
-            # Таймаут из базы (если есть) или по умолчанию
             timeout_min = await db.get_setting("moderation_timeout", str(self.AUTO_PUBLISH_TIMEOUT_MINUTES))
             try:
                 timeout_min = int(timeout_min)
@@ -154,54 +166,55 @@ class BreakingNewsModerator:
                 f"❌ <i>Авто-отмена через {timeout_min} мин.</i>"
             )
             
-            reply_markup_dict = {
-                "inline_keyboard": [
-                    [
-                        {
-                            "text": "✅ Опубликовать",
-                            "callback_data": f"breaking_approve:{pending_id}",
-                            "style": "success"
-                        },
-                        {
-                            "text": "❌ Отклонить",
-                            "callback_data": f"breaking_reject:{pending_id}",
-                            "style": "danger"
-                        }
-                    ]
-                ]
-            }
+            # БАГ 1 ИСПРАВЛЕН: InlineKeyboardMarkup вместо dict
+            builder = InlineKeyboardBuilder()
+            builder.button(
+                text="✅ Опубликовать",
+                callback_data=f"breaking_approve:{pending_id}"
+            )
+            builder.button(
+                text="❌ Отклонить",
+                callback_data=f"breaking_reject:{pending_id}"
+            )
+            builder.adjust(2)
+            reply_markup = builder.as_markup()
             
             image_url = news_item.get('image_url')
+            sent = None
             
             try:
                 if image_url and isinstance(image_url, str) and image_url.startswith('http'):
-                    await bot.send_photo(
+                    sent = await bot.send_photo(
                         chat_id=admin_id,
                         photo=image_url,
                         caption=message_text,
                         parse_mode="HTML",
-                        reply_markup=reply_markup_dict
+                        reply_markup=reply_markup
                     )
                 else:
-                    await bot.send_message(
+                    sent = await bot.send_message(
                         chat_id=admin_id,
                         text=message_text,
                         parse_mode="HTML",
-                        reply_markup=reply_markup_dict
+                        reply_markup=reply_markup
                     )
             except Exception as send_error:
                 logger.warning(f"⚠️ Не удалось отправить фото админу {admin_id}: {send_error}")
-                await bot.send_message(
+                sent = await bot.send_message(
                     chat_id=admin_id,
                     text=message_text,
                     parse_mode="HTML",
-                    reply_markup=reply_markup_dict
+                    reply_markup=reply_markup
                 )
             
-            logger.info(f"📨 Уведомление отправлено админу {admin_id} (pending #{pending_id})")
+            if sent:
+                logger.info(f"📨 Уведомление отправлено админу {admin_id} (pending #{pending_id})")
+                return sent.message_id
+            return None
             
         except Exception as e:
             logger.error(f"❌ Ошибка отправки уведомления админу {admin_id}: {e}", exc_info=True)
+            return None
     
     async def handle_admin_approval(self, callback_query: CallbackQuery, pending_id: int, decision: str):
         """
@@ -253,13 +266,11 @@ class BreakingNewsModerator:
                 
                 # Публикуем немедленно
                 await self._publish_breaking_news(pending['news_url'])
-                
-                # Обновляем сообщения других админов
-                await self._notify_other_admins(admin_id, pending_id, "одобрил")
+                await self._notify_other_admins_of_decision(admin_id, pending_id, pending, decision="approved")
                 
             else:  # rejected
                 await callback_query.answer("❌ Новость отклонена", show_alert=True)
-                await self._notify_other_admins(admin_id, pending_id, "отклонил")
+                await self._notify_other_admins_of_decision(admin_id, pending_id, pending, decision="rejected")
             
             # Редактируем / удаляем сообщение с кнопками
             if decision == 'approved':
@@ -322,33 +333,86 @@ class BreakingNewsModerator:
         except Exception:
             pass
 
-    async def _notify_other_admins(self, approving_admin_id: int, pending_id: int, action: str):
-        """Уведомить других админов о принятом решении"""
+    async def _delayed_delete_by_id(self, chat_id: int, message_id: int, delay: int = 3):
+        """Удалить сообщение по chat_id + message_id через delay секунд"""
+        await asyncio.sleep(delay)
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except Exception:
+            pass
+
+    async def _notify_other_admins_of_decision(
+        self,
+        approving_admin_id: int,
+        pending_id: int,
+        pending: Dict,
+        decision: str
+    ):
+        """
+        Уведомить других админов о решении.
+        Если решение approved — помечаем их сообщения. 
+        Если rejected — удаляем сообщения у всех других.
+        """
+        import json
         try:
             from config import ADMIN_NAMES
             admin_name = ADMIN_NAMES.get(approving_admin_id, f"Админ #{approving_admin_id}")
-            
-            is_rejected = (action == "отклонил")
-            notification_text = f"ℹ️ {admin_name} {action} breaking news (ID: {pending_id})"
-            
+            verb = "одобрил" if decision == "approved" else "отклонил"
+            emoji = "✅" if decision == "approved" else "❌"
+
+            # Извлекаем сохранённые msg_id
+            admin_messages: Dict[int, int] = {}
+            raw = pending.get('admin_messages')
+            if raw:
+                try:
+                    admin_messages = {int(k): int(v) for k, v in json.loads(raw).items()}
+                except Exception:
+                    pass
+
             for admin_id in ADMIN_IDS:
-                if admin_id != approving_admin_id:
-                    try:
-                        sent = await bot.send_message(
-                            chat_id=admin_id,
-                            text=notification_text
-                        )
-                        # Если отклонено — уведомление удаляем через 10 секунд
-                        if is_rejected:
+                if admin_id == approving_admin_id:
+                    continue
+                try:
+                    msg_id = admin_messages.get(admin_id)
+                    if msg_id:
+                        if decision == "rejected":
+                            # Удаляем оригинальное сообщение модерации через 3 сек
                             asyncio.create_task(
-                                self._delayed_delete_message(sent, delay=10)
+                                self._delayed_delete_by_id(admin_id, msg_id, delay=3)
                             )
-                    except Exception as e:
-                        logger.debug(f"Не удалось уведомить админа {admin_id}: {e}")
-                        
+                        else:  # approved
+                            try:
+                                await bot.edit_message_caption(
+                                    chat_id=admin_id, message_id=msg_id,
+                                    caption=f"{emoji} {admin_name} {verb} breaking news (ID: {pending_id})",
+                                    parse_mode="HTML"
+                                )
+                            except Exception:
+                                # Если не фото — текст
+                                try:
+                                    await bot.edit_message_text(
+                                        chat_id=admin_id, message_id=msg_id,
+                                        text=f"{emoji} {admin_name} {verb} breaking news (ID: {pending_id})",
+                                        parse_mode="HTML"
+                                    )
+                                except Exception:
+                                    pass
+                    else:
+                        # Для старых записей без admin_messages — просто текст
+                        notif = await bot.send_message(
+                            chat_id=admin_id,
+                            text=f"{emoji} {admin_name} {verb} breaking news (ID: {pending_id})"
+                        )
+                        if decision == "rejected":
+                            asyncio.create_task(
+                                self._delayed_delete_message(notif, delay=10)
+                            )
+                except Exception as e:
+                    logger.debug(f"Не удалось уведомить админа {admin_id}: {e}")
+
         except Exception as e:
-            logger.debug(f"Ошибка уведомления других админов: {e}")
-    
+            logger.debug(f"Ошибка _notify_other_admins_of_decision: {e}")
+
     async def handle_expired_requests(self):
         """
         Обработка истекших запросов на модерацию.
@@ -435,16 +499,29 @@ class BreakingNewsModerator:
             remaining = timeout_min - self.REMINDER_AT_MINUTES
 
             for req in to_remind:
+                # Формируем кнопки для быстрого решения прямо из напоминания
+                reminder_builder = InlineKeyboardBuilder()
+                reminder_builder.button(
+                    text="✅ Опубликовать", callback_data=f"breaking_approve:{req['id']}"
+                )
+                reminder_builder.button(
+                    text="❌ Отклонить", callback_data=f"breaking_reject:{req['id']}"
+                )
+                reminder_builder.adjust(2)
+                reminder_markup = reminder_builder.as_markup()
+
                 for admin_id in ADMIN_IDS:
                     try:
                         await bot.send_message(
                             chat_id=admin_id,
                             text=(
-                                f"⏰ <b>Напоминание!</b> Breaking News ID: {req['id']}\n"
-                                f"❗ Осталось <b>{remaining} мин.</b> для одобрения или отклонения.\n"
-                                f"📄 URL: <code>{req['news_url'][:60]}</code>"
+                                f"⏰ <b>Напоминание о Breaking News!</b>\n"
+                                f"ID: {req['id']} — осталось <b>{remaining} мин.</b>\n"
+                                f"📄 <code>{req['news_url'][:60]}</code>\n\n"
+                                f"Примите решение:"
                             ),
-                            parse_mode="HTML"
+                            parse_mode="HTML",
+                            reply_markup=reminder_markup
                         )
                     except Exception as e:
                         logger.debug(f"Не удалось уведомить админа {admin_id}: {e}")
