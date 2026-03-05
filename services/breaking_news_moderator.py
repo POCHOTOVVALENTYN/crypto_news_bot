@@ -93,7 +93,7 @@ class BreakingNewsModerator:
             return []
     
     async def _create_moderation_request(self, news_item: Dict):
-        """Создать запрос на модерацию и отправить админам"""
+        """Создать запрос на модерацию: два pipeline — публикация (WYSIWYG) и превью (краткая карточка)"""
         news_url = news_item['url']
         
         try:
@@ -101,7 +101,6 @@ class BreakingNewsModerator:
             
             # Переводим на русский перед модерацией
             translation = await translator.translate_news(news_item['title'], news_item.get('summary', ''))
-            
             if translation:
                 news_item['title'] = translation['ru_title']
                 if translation.get('ru_summary'):
@@ -109,38 +108,41 @@ class BreakingNewsModerator:
 
             # Добавляем в pending_breaking_news
             async with db.conn.execute(
-                """
-                INSERT INTO pending_breaking_news (news_url)
-                VALUES (?)
-                """,
+                "INSERT INTO pending_breaking_news (news_url) VALUES (?)",
                 (news_url,)
             ) as cursor:
                 await db.conn.commit()
                 pending_id = cursor.lastrowid
             
-            logger.info(f"📋 Создан запрос на модерацию #{pending_id} для: {news_item['title'][:50]}")
+            logger.info(f"📋 Создан запрос #{pending_id}: {news_item['title'][:50]}")
             
-            # ✅ WYSIWYG: готовим текст ОДИН РАЗ для всех admin + публикации
-            from services.publish_helper import prepare_news_for_publish
+            # ── Pipeline 1: Полная публикация для канала (WYSIWYG) ──────────────────
+            from services.publish_helper import prepare_news_for_publish, prepare_news_for_moderation
             news_copy = dict(news_item)
-            preview_data = await prepare_news_for_publish(news_copy, is_breaking=True)
-            logger.info(f"✅ Текст подготовлен ({len(preview_data.get('text',''))} симв), будет использован и для публикации")
+            channel_data = await prepare_news_for_publish(news_copy, is_breaking=True)
+            logger.info(f"✅ Channel pipeline: {len(channel_data.get('text',''))} симв")
             
-            # Отправляем всем админам (передаём уже готовый текст)
+            # ── Pipeline 2: Краткое превью для администратора ───────────────────────
+            moderation_card = await prepare_news_for_moderation(dict(news_item))
+            logger.info(f"✅ Moderation preview: {len(moderation_card.get('body',''))} симв")
+            
+            # Отправляем всем админам (краткую карточку + кнопки)
             admin_msg_ids: Dict[int, int] = {}
             for admin_id in ADMIN_IDS:
-                msg_id = await self._send_admin_notification(admin_id, news_item, pending_id, preview_data=preview_data)
+                msg_id = await self._send_admin_notification(
+                    admin_id, news_item, pending_id,
+                    moderation_card=moderation_card
+                )
                 if msg_id:
                     admin_msg_ids[admin_id] = msg_id
             
-            # Сохраняем в БД: msg_id у каждого admin + готовый текст (WYSIWYG)
+            # Сохраняем в БД: канальный текст (WYSIWYG) + msg_ids
             import json
             update_data = {
-                'admin_messages': json.dumps(admin_msg_ids) if admin_msg_ids else None,
-                'prepared_text': preview_data.get('text'),
-                'prepared_image_url': preview_data.get('image_url'),
+                'admin_messages':     json.dumps(admin_msg_ids) if admin_msg_ids else None,
+                'prepared_text':      channel_data.get('text'),
+                'prepared_image_url': channel_data.get('image_url'),
             }
-            # Убираем None-поля
             update_data = {k: v for k, v in update_data.items() if v is not None}
             if update_data:
                 set_clause = ", ".join(f"{k} = ?" for k in update_data)
@@ -153,85 +155,87 @@ class BreakingNewsModerator:
         except Exception as e:
             logger.error(f"❌ Ошибка создания запроса на модерацию: {e}", exc_info=True)
     
-    async def _send_admin_notification(self, admin_id: int, news_item: Dict, pending_id: int,
-                                          preview_data: Optional[Dict] = None) -> Optional[int]:
-        """WYSIWYG: превью у администратора = финальная публикация в канале.
+    async def _send_admin_notification(
+        self,
+        admin_id: int,
+        news_item: Dict,
+        pending_id: int,
+        moderation_card: Optional[Dict] = None,
+        # legacy param — ignored now
+        preview_data: Optional[Dict] = None
+    ) -> Optional[int]:
+        """
+        Отправляет краткую admin-карточку модерации.
         
-        Args:
-            preview_data: Если уже рассчитан (первый администратор), для последующих передаём готовый.
-        Returns: message_id отправленного сообщения
+        Формат (итого: ~350-400 симв):
+          🚨 BREAKING | Приоритет 10/10 | ⏳ 30 мин.
+          
+          📰 ЗАГОЛОВОК НОВОСТИ
+          
+          Краткая выжимка 2-3 предложения с фактами.
+          
+          📊 BTC $72K (+1.4%) • ETH $2.1K (+2.5%) • F&G: 22
         """
         try:
-            if preview_data is None:
-                from services.publish_helper import prepare_news_for_publish
-                news_copy = dict(news_item)
-                preview_data = await prepare_news_for_publish(news_copy, is_breaking=True)
-            
             timeout_min = await db.get_setting("moderation_timeout", str(self.AUTO_PUBLISH_TIMEOUT_MINUTES))
             try:
                 timeout_min = int(timeout_min)
             except (ValueError, TypeError):
                 timeout_min = self.AUTO_PUBLISH_TIMEOUT_MINUTES
+
+            # Если moderation_card не предан — формируем через старый путь (обратная совместимость)
+            if moderation_card is None:
+                title = news_item.get('title', 'Breaking News')
+                body = news_item.get('summary', '')
+                if len(body) > 200:
+                    from services.message_builder import AdvancedMessageFormatter as AMF
+                    body = AMF._smart_truncate(body, 200)
+                prices_line = ''
+            else:
+                title = moderation_card.get('title') or news_item.get('title', 'Breaking News')
+                body = moderation_card.get('body', '')
+                prices_line = moderation_card.get('prices_line', '')
             
-            message_text = (
-                f"🚨 <b>BREAKING NEWS МОДЕРАЦИЯ</b>\n"
-                f"➖➖➖➖➖➖➖➖➖➖\n"
-                f"{preview_data['text']}\n"
-                f"➖➖➖➖➖➖➖➖➖➖\n"
-                f"⚡️ <b>Приоритет:</b> {news_item['priority']}/10\n"
-                f"⏳ <b>Время:</b> {news_item['added_at']}\n"
-                f"❌ <i>Авто-отмена через {timeout_min} мин.</i>"
-            )
+            # Чистим заголовок от спецсимволов (оставляем только буквы, цифры, основную пунктуацию)
+            import re
+            clean_title = re.sub(r'[^\w\s\.,!?\-\$\%\/\#]', '', title).strip()
+            display_title = clean_title[:80].upper() if clean_title else title[:80].upper()
             
-            # БАГ 1 ИСПРАВЛЕН: InlineKeyboardMarkup вместо dict
+            # Сборка карточки — чистый формат, без разделителей
+            lines = [
+                f"🚨 <b>BREAKING NEWS</b>  |  Приоритет <b>{news_item.get('priority', '?')}/10</b>  |  ⏳ <i>{timeout_min} мин.</i>",
+                "",
+                f"📰 <b>{display_title}</b>",
+            ]
+            if body:
+                lines.append("")
+                lines.append(body.strip())
+            if prices_line:
+                lines.append("")
+                lines.append(f"📊 {prices_line}")
+            
+            message_text = "\n".join(lines)
+            
+            # Кнопки
             builder = InlineKeyboardBuilder()
-            builder.button(
-                text="✅ Опубликовать",
-                callback_data=f"breaking_approve:{pending_id}"
-            )
-            builder.button(
-                text="❌ Отклонить",
-                callback_data=f"breaking_reject:{pending_id}"
-            )
+            builder.button(text="✅ Опубликовать", callback_data=f"breaking_approve:{pending_id}")
+            builder.button(text="❌ Отклонить", callback_data=f"breaking_reject:{pending_id}")
             builder.adjust(2)
             reply_markup = builder.as_markup()
             
-            image_url = news_item.get('image_url')
-            sent = None
-            
-            try:
-                if image_url and isinstance(image_url, str) and image_url.startswith('http'):
-                    sent = await bot.send_photo(
-                        chat_id=admin_id,
-                        photo=image_url,
-                        caption=message_text,
-                        parse_mode="HTML",
-                        reply_markup=reply_markup
-                    )
-                else:
-                    sent = await bot.send_message(
-                        chat_id=admin_id,
-                        text=message_text,
-                        parse_mode="HTML",
-                        reply_markup=reply_markup
-                    )
-            except Exception as send_error:
-                logger.warning(f"⚠️ Не удалось отправить фото админу {admin_id}: {send_error}")
-                sent = await bot.send_message(
-                    chat_id=admin_id,
-                    text=message_text,
-                    parse_mode="HTML",
-                    reply_markup=reply_markup
-                )
-            
-            if sent:
-                logger.info(f"📨 Уведомление отправлено админу {admin_id} (pending #{pending_id})")
-                return sent.message_id
-            return None
+            # Отправляем как текстовое сообщение (без фото, чтобы не связываться с caption-лимитом)
+            sent = await bot.send_message(
+                chat_id=admin_id,
+                text=message_text,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+            return sent.message_id if sent else None
             
         except Exception as e:
-            logger.error(f"❌ Ошибка отправки уведомления админу {admin_id}: {e}", exc_info=True)
+            logger.error(f"❌ Ошибка _send_admin_notification для {admin_id}: {e}", exc_info=True)
             return None
+
     
     async def handle_admin_approval(self, callback_query: CallbackQuery, pending_id: int, decision: str):
         """

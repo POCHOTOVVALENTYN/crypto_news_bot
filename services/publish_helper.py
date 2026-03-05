@@ -238,6 +238,99 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
     return msg_data
 
 
+async def prepare_news_for_moderation(news_item: Dict) -> Dict:
+    """
+    Краткий pipeline для admin preview-карточки модерации.
+    
+    НЕ используется для публикации — только для превью у администратора.
+    Возвращает краткую выжимку (2-3 предложения), однострочные цены.
+    
+    Returns:
+        Dict: {
+            'title': str,          # заголовок новости
+            'body': str,           # краткая выжимка 150-200 симв
+            'prices_line': str,    # "BTC $72K (+1.4%) • ETH $2.1K (+2.5%) • F&G: 22"
+        }
+    """
+    from services.translator import translator
+    loop = asyncio.get_event_loop()
+
+    title = news_item.get('title', '')
+    summary = news_item.get('summary', '') or news_item.get('full_content', '')
+
+    # 1. Перевод заголовка на русский
+    try:
+        detected = await loop.run_in_executor(None, translator.detect_language, title)
+        if detected and detected != 'ru':
+            translated = await loop.run_in_executor(
+                None, translator.translate_text, title, detected, 'ru'
+            )
+            if translated:
+                title = translated
+    except Exception:
+        pass
+
+    # 2. Перевод тела
+    if summary:
+        try:
+            detected = await loop.run_in_executor(None, translator.detect_language, summary[:200])
+            if detected and detected != 'ru':
+                translated = await loop.run_in_executor(
+                    None, translator.translate_text, summary[:1500], detected, 'ru'
+                )
+                if translated:
+                    summary = translated
+        except Exception:
+            pass
+
+    # 3. AI-выжимка: digest tone → 150-200 симв
+    body = summary
+    if summary:
+        try:
+            news_analyzer = NewsAnalyzer()
+            digest_text = await news_analyzer.rewrite_for_telegram(
+                text=summary,
+                title=title,
+                has_image=False,
+                tone="digest"
+            )
+            if digest_text:
+                body = digest_text
+                logger.info(f"✅ Digest-выжимка: {len(body)} симв")
+        except Exception as e:
+            logger.warning(f"⚠️ Digest AI failed, using raw summary: {e}")
+            # Fallback: обрезаем summary до 200 симв по предложению
+            from services.message_builder import AdvancedMessageFormatter as AMF
+            body = AMF._smart_truncate(summary, 200) if len(summary) > 200 else summary
+
+    # 4. Однострочные цены (не вызываем если не нужно — берём только основные)
+    prices_parts = []
+    try:
+        prices = await get_multiple_crypto_prices()
+        if prices:
+            btc = prices.get('bitcoin')
+            eth = prices.get('ethereum')
+            if btc:
+                sign = '+' if btc['change'] >= 0 else ''
+                prices_parts.append(f"BTC ${btc['price']:,.0f} ({sign}{btc['change']:.1f}%)")
+            if eth:
+                sign = '+' if eth['change'] >= 0 else ''
+                prices_parts.append(f"ETH ${eth['price']:,.0f} ({sign}{eth['change']:.1f}%)")
+        fear_greed = await FearGreedIndexTracker.get_fear_greed_index()
+        if fear_greed:
+            prices_parts.append(f"F&G: {fear_greed.get('value', '?')}/100")
+    except Exception:
+        pass
+
+    prices_line = " • ".join(prices_parts) if prices_parts else ""
+
+    return {
+        'title': title,
+        'body': body,
+        'prices_line': prices_line,
+    }
+
+
 
 async def publish_single_news(news_item: Dict, is_breaking: bool = False, pending_id: int = None):
     """
