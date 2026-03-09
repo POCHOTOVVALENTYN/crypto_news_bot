@@ -22,6 +22,15 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 logger = logging.getLogger(__name__)
 
 
+# ── Telegram лимиты (единое место истины) ────────────────────────────────────
+TGRAM_CAPTION_LIMIT = 1024   # caption (с фото)
+TGRAM_MSG_LIMIT     = 4096   # message (без фото)
+# overhead = заголовок (~90) + цены (~120) + футер (~80) + HTML-теги (~60) + запас
+BREAKING_OVERHEAD   = 350
+BODY_LIMIT_CAPTION  = TGRAM_CAPTION_LIMIT - BREAKING_OVERHEAD  # = 674
+BODY_LIMIT_MSG      = TGRAM_MSG_LIMIT     - BREAKING_OVERHEAD  # = 3746
+
+
 async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -> Dict:
     """
     БАГ 1 ИСПРАВЛЕН: Полный pipeline подготовки новости.
@@ -34,8 +43,9 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
     from services.translator import translator
     loop = asyncio.get_event_loop()
     
-    # 1. Перевести title (если не на русском)
-    if news_item.get('title'):
+    # 1. Перевести title (если не на русском, и не переводили раньше)
+    # БАГ 1 ИСПРАВЛЕН: проверяем флаг _ru_translated чтобы не переводить трижды
+    if news_item.get('title') and not news_item.get('_ru_translated'):
         try:
             detected_lang = await loop.run_in_executor(
                 None, translator.detect_language, news_item['title']
@@ -51,9 +61,9 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
         except Exception as e:
             logger.debug(f"⚠️ Ошибка перевода title: {e}")
     
-    # 2. Перевести summary
+    # 2. Перевести summary (только если не переводили раньше)
     summary = news_item.get('summary', '')
-    if summary:
+    if summary and not news_item.get('_ru_translated'):
         try:
             summary_clean = AdvancedMessageFormatter.clean_text(summary)
             if summary_clean:
@@ -72,9 +82,9 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
         except Exception as e:
             logger.debug(f"⚠️ Ошибка перевода summary: {e}")
     
-    # 3. Перевести full_content
+    # 3. Перевести full_content (только если не переводили раньше)
     full_content = news_item.get('full_content', '')
-    if full_content:
+    if full_content and not news_item.get('_ru_translated'):
         try:
             full_content_clean = AdvancedMessageFormatter.clean_text(full_content)
             if full_content_clean and len(full_content_clean) > 50:
@@ -121,11 +131,14 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
             logger.error(f"❌ Ошибка извлечения ключевых моментов: {e}")
     
     # Применяем дедупликацию
+    # БАГ 5 ИСПРАВЛЕН: для breaking news используем порог 0.85 (не 0.6)
+    # чтобы не удалять строки, которые содержат важные факты
+    _dedup_threshold = 0.85 if is_breaking else 0.6
     dedup_result = await ContentDeduplicator.smart_summarize(
         title=news_item['title'],
         description=news_item.get('summary', ''),
         key_points=key_points,
-        dedup_threshold=0.6
+        dedup_threshold=_dedup_threshold
     )
     title = dedup_result['title']
     summary = dedup_result['content'] or news_item.get('summary', '')
@@ -140,16 +153,16 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
     # Не full_content — он может быть длиннее и не переведён
     raw_body = summary or ''
     
-    # Лимиты для тела с учётом overhead (~300 симв: заголовк+цены+футер).
-    # caption (1024 симв Telegram) = 600 body + 300 overhead + 124 запас
-    # message (4096 симв Telegram) = 3000 body + 300 overhead + 796 запас
-    OVERHEAD = 300
-    body_limit = (1024 - OVERHEAD - 124) if has_image else (4096 - OVERHEAD - 796)
-    body_limit = max(body_limit, 300)
+    # БАГ 3 ИСПРАВЛЕН: используем единые константы из модуля (BODY_LIMIT_CAPTION/MSG)
+    body_limit = BODY_LIMIT_CAPTION if has_image else BODY_LIMIT_MSG
     
-    # БАГ 6 ИСПРАВЛЕН: для Breaking News рерайт ВСЕГДА (не только при длинном тексте)
-    # Для обычных новостей — только при превышении лимита
-    needs_rewrite = is_breaking or (len(raw_body) > body_limit)
+    # БАГ 6 ИСПРАВЛЕН: рерайт только при реальной необходимости
+    # - текст слишком длинный (> body_limit)  → нужно сократить
+    # - текст слишком короткий (< 180)        → нужно расширить (enrich)
+    # - текст в норме (180..body_limit)        → не трогаем (сохраняем точность)
+    needs_rewrite = is_breaking and (len(raw_body) > body_limit or len(raw_body) < 180)
+    if not is_breaking:
+        needs_rewrite = len(raw_body) > body_limit
     
     if needs_rewrite and raw_body:
         try:

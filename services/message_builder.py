@@ -119,17 +119,10 @@ class AdvancedMessageFormatter:
         # summary уже прошёл через AI-рерайт, дедупликацию и перевод — он уже готов.
         content_text = summary
         
-        # Оценка overhead для финального smart_truncate (если вдруг что-то прошло мимо AI)
-        OVERHEAD_ESTIMATE = 400
-        if image_url:
-            max_caption_len = max(950 - OVERHEAD_ESTIMATE, 400)
-        else:
-            max_caption_len = 3800 - OVERHEAD_ESTIMATE
+        # БАГ 4 ИСПРАВЛЕН: убрали первый smart_truncate (двойная обрезка).
+        # Финальный smart_truncate ниже (telegram_limit) — единственный и правильный.
+        # Размер тела контролируется в publish_helper через BODY_LIMIT_CAPTION.
         
-        # Умный обрез если текст всё ещё превышает лимит (fallback)
-        if len(content_text) > max_caption_len:
-            content_text = self._smart_truncate(content_text, max_caption_len)
-             
         # Очистка текста
         content_text = self.clean_text(content_text)
 

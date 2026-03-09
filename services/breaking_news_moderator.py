@@ -99,12 +99,16 @@ class BreakingNewsModerator:
         try:
             from services.translator import translator
             
-            # Переводим на русский перед модерацией
+            # Переводим на русский перед модерацией (ОДИН РАЗ)
+            # БАГ 1 ИСПРАВЛЕН: выставляем флаг _ru_translated = True чтобы
+            # последующие pipeline (prepare_for_publish, prepare_for_moderation)
+            # не переводили уже переведённый текст повторно
             translation = await translator.translate_news(news_item['title'], news_item.get('summary', ''))
             if translation:
                 news_item['title'] = translation['ru_title']
                 if translation.get('ru_summary'):
                     news_item['summary'] = translation['ru_summary']
+                news_item['_ru_translated'] = True  # пропускаем перевод в downstream
 
             # Добавляем в pending_breaking_news
             async with db.conn.execute(
@@ -198,7 +202,9 @@ class BreakingNewsModerator:
             
             # Чистим заголовок от спецсимволов (оставляем только буквы, цифры, основную пунктуацию)
             import re
-            clean_title = re.sub(r'[^\w\s\.,!?\-\$\%\/\#]', '', title).strip()
+            # БАГ 7 ИСПРАВЛЕН: добавлены «:», «"», «()» в whitelist
+            # чтобы заголовки типа 'Lofty: "BTC упадёт"' не теряли смысл
+            clean_title = re.sub(r'[^\w\s\.,!?\-\$\%\/\#\:\"\(\)]', '', title).strip()
             display_title = clean_title[:80].upper() if clean_title else title[:80].upper()
             
             # Сборка карточки — чистый формат, без разделителей
@@ -555,6 +561,17 @@ class BreakingNewsModerator:
                         pass
 
                 reminder_msg_ids: Dict[int, int] = {}
+
+                # БАГ 9 ИСПРАВЛЕН: перепроверяем что запись ещё pending
+                # (другой admin мог одобрить пока мы готовили напоминание)
+                async with db.conn.execute(
+                    "SELECT admin_decision FROM pending_breaking_news WHERE id = ?",
+                    (req['id'],)
+                ) as _chk:
+                    _row = await _chk.fetchone()
+                    if not _row or _row[0] != 'pending':
+                        logger.info(f"⏭ Reminder #{req['id']} пропущен — уже обработан ({_row[0] if _row else 'not found'})")
+                        continue
 
                 for admin_id in ADMIN_IDS:
                     try:
