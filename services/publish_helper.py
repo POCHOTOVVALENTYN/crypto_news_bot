@@ -271,20 +271,24 @@ async def prepare_news_for_moderation(news_item: Dict) -> Dict:
     title = news_item.get('title', '')
     summary = news_item.get('summary', '') or news_item.get('full_content', '')
 
-    # 1. Перевод заголовка на русский
-    try:
-        detected = await loop.run_in_executor(None, translator.detect_language, title)
-        if detected and detected != 'ru':
-            translated = await loop.run_in_executor(
-                None, translator.translate_text, title, detected, 'ru'
-            )
-            if translated:
-                title = translated
-    except Exception:
-        pass
+    # БАГ 6 ИСПРАВЛЕН: проверяем флаг _ru_translated — если уже переводили, пропускаем
+    already_translated = news_item.get('_ru_translated', False)
 
-    # 2. Перевод тела
-    if summary:
+    # 1. Перевод заголовка на русский (только если не переводили ранее)
+    if not already_translated:
+        try:
+            detected = await loop.run_in_executor(None, translator.detect_language, title)
+            if detected and detected != 'ru':
+                translated = await loop.run_in_executor(
+                    None, translator.translate_text, title, detected, 'ru'
+                )
+                if translated:
+                    title = translated
+        except Exception:
+            pass
+
+    # 2. Перевод тела (только если не переводили ранее)
+    if summary and not already_translated:
         try:
             detected = await loop.run_in_executor(None, translator.detect_language, summary[:200])
             if detected and detected != 'ru':

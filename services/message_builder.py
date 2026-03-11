@@ -10,6 +10,9 @@ from loader import bot
 
 logger = logging.getLogger(__name__)
 
+# Маркер для надёжного поиска начала footer при smart_truncate (БАГ 1 ИСПРАВЛЕН)
+_FOOTER_MARKER = "\n\n\u200b_FOOTER_"  # невидимый символ + метка
+
 
 class AdvancedMessageFormatter:
     """Усовершенствованный форматировщик сообщений"""
@@ -126,19 +129,22 @@ class AdvancedMessageFormatter:
         # Очистка текста
         content_text = self.clean_text(content_text)
 
-        # БАГ 5 ИСПРАВЛЕН: для breaking_news порог повышен до 0.85 (чтобы не удалять короткие факты)
-        dedup_threshold = 0.85 if is_breaking else 0.6
-        norm_title_words = set(re.sub(r'[^\w]', ' ', title_first_line.lower()).split())
-        if norm_title_words:
-            filtered_lines = []
-            for line in content_text.split('\n'):
-                norm_line_words = set(re.sub(r'[^\w]', ' ', line.lower()).split())
-                if norm_line_words:
-                    overlap = len(norm_title_words & norm_line_words) / len(norm_title_words)
-                    if overlap > dedup_threshold:
-                        continue
-                filtered_lines.append(line)
-            content_text = '\n'.join(filtered_lines).strip()
+        # БАГ 3+4 ИСПРАВЛЕН: дедупликация в format_professional_news отключена для breaking news.
+        # ContentDeduplicator уже сделал её в publish_helper с порогом 0.85.
+        # Двойная дедупликация удаляла важные факты.
+        # Для обычных новостей дедупликацию по заголовку оставляем.
+        if not is_breaking:
+            norm_title_words = set(re.sub(r'[^\w]', ' ', title_first_line.lower()).split())
+            if norm_title_words:
+                filtered_lines = []
+                for line in content_text.split('\n'):
+                    norm_line_words = set(re.sub(r'[^\w]', ' ', line.lower()).split())
+                    if norm_line_words:
+                        overlap = len(norm_title_words & norm_line_words) / len(norm_title_words)
+                        if overlap > 0.6:
+                            continue
+                    filtered_lines.append(line)
+                content_text = '\n'.join(filtered_lines).strip()
         
         # Убираем источник из текста, если он там есть
         if source:
@@ -200,7 +206,7 @@ class AdvancedMessageFormatter:
             # Обрезаем по предложению: сначала пытаемся вырезать тело,
             # оставляя заголовок и футер нетронутыми
             body_start = len(header) + 2  # +2 за \n\n
-            body_end = full_text.rfind('\n\n🔸')  # перед футером
+            body_end = full_text.rfind(_FOOTER_MARKER)  # БАГ 1 ИСПРАВЛЕН: надёжный маркер footer
             if body_end > body_start:
                 # Есть выделенный блок тела — обрезаем только его
                 available_for_body = telegram_limit - (len(full_text) - body_end)
@@ -263,10 +269,12 @@ class AdvancedMessageFormatter:
         )
 
     def create_channel_footer(self) -> str:
-        """БАГ 4: Правильный футер для публикаций в канале (Instagram + Telegram)"""
+        """Футер для публикаций в канале. Содержит _FOOTER_MARKER для надёжного rfind при truncate."""
+        # БАГ 1 ИСПРАВЛЕН: маркер позволяет точно найти начало footer для smart_truncate
         return (
-            f"\n\n🔸<a href='https://www.instagram.com/zhenya_eduardovich.2?igsh=M2lwN2p2enhuN3Nl'>BLEXLER INSTAGRAM</a>🔸\n"
-            f"🔸<a href='https://t.me/blexler_invest'>BLEXLER TELEGRAM</a>🔸"
+            _FOOTER_MARKER +
+            "\n🔸<a href='https://www.instagram.com/zhenya_eduardovich.2?igsh=M2lwN2p2enhuN3Nl'>BLEXLER INSTAGRAM</a>🔸\n"
+            "��<a href='https://t.me/blexler_invest'>BLEXLER TELEGRAM</a>🔸"
         )
 
     def clean_text(self, text: str) -> str:
@@ -305,8 +313,11 @@ class AdvancedMessageFormatter:
             # Удаляем повторяющиеся спецсимволы и разделители
             # БАГ 4 ИСПРАВЛЕН: удаляем спецсимволы в начале/конце строки,
             # но не если после '-' сразу идёт буква (это AI bullet-point)
-            line = re.sub(r'^[\*\_\=\#\s]+', '', line)  # не удаляем '-' из начала
-            line = re.sub(r'^\-(?!\s*\w)', '', line)    # удаляем '-' только если за ним не буква
+            line = re.sub(r'^[\*\_\=\#\s]+', '', line)  # не удаляем '-' и '—' из начала
+            # БАГ 5 ИСПРАВЛЕН: защищаем и ASCII дефис '-' и EM dash '—' (U+2014)
+            # '— Факт: ...' — это AI bullet-point, не удаляем
+            line = re.sub(r'^\-(?!\s*\w)', '', line)    # ASCII дефис только если не за буквой
+            line = re.sub(r'^\u2014(?!\s*\w)', '', line) # EM dash только если не за буквой
             line = re.sub(r'[\*\_\=\#\s]+$', '', line)  # конец строки
             
             # Удаляем разделители типа ➖➖➖

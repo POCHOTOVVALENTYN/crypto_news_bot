@@ -299,26 +299,30 @@ class BreakingNewsModerator:
             # Удаляем reminder-сообщения у всех сразу (они уже неактуальны)
             asyncio.create_task(self._delete_reminder_messages(pending, delay=1))
             
-            # Редактируем / удаляем оригинальное сообщение модерации
+            # БАГ 7 ИСПРАВЛЕН: обновляем карточку у одобрившего admin (чистый статус, убираем кнопки)
             if decision == 'approved':
                 try:
+                    emoji_self = "✅"
                     if callback_query.message.photo:
                         await callback_query.message.edit_caption(
-                            caption=callback_query.message.caption + "\n\n✅ ОДОБРЕНО админом",
-                            parse_mode="HTML"
+                            caption=f"{emoji_self} <b>Вы одобрили</b> breaking news\n<i>ID: {pending_id} — публикую в канал...</i>",
+                            parse_mode="HTML",
+                            reply_markup=None
                         )
                     else:
                         await callback_query.message.edit_text(
-                            text=callback_query.message.text + "\n\n✅ ОДОБРЕНО админом",
-                            parse_mode="HTML"
+                            text=f"{emoji_self} <b>Вы одобрили</b> breaking news\n<i>ID: {pending_id} — публикую в канал...</i>",
+                            parse_mode="HTML",
+                            reply_markup=None
                         )
                 except Exception:
                     pass
             else:
+                # При отклонении — удаляем карточку у одобрившего через 5 сек
                 asyncio.create_task(
                     self._delayed_delete_message(callback_query.message, delay=5)
                 )
-            
+
 
         except Exception as e:
             logger.error(f"❌ Ошибка handle_admin_approval: {e}", exc_info=True)
@@ -424,22 +428,16 @@ class BreakingNewsModerator:
                                 self._delayed_delete_by_id(admin_id, msg_id, delay=3)
                             )
                         else:  # approved
+                            # БАГ 2 ИСПРАВЛЕН: admin-карточка — текстовое сообщение (send_message, без фото).
+                            # edit_message_caption вызвал бы BadRequest → сразу edit_message_text
                             try:
-                                await bot.edit_message_caption(
+                                await bot.edit_message_text(
                                     chat_id=admin_id, message_id=msg_id,
-                                    caption=f"{emoji} {admin_name} {verb} breaking news (ID: {pending_id})",
+                                    text=f"{emoji} <b>{admin_name} {verb}</b> breaking news\n<i>ID: {pending_id}</i>",
                                     parse_mode="HTML"
                                 )
                             except Exception:
-                                # Если не фото — текст
-                                try:
-                                    await bot.edit_message_text(
-                                        chat_id=admin_id, message_id=msg_id,
-                                        text=f"{emoji} {admin_name} {verb} breaking news (ID: {pending_id})",
-                                        parse_mode="HTML"
-                                    )
-                                except Exception:
-                                    pass
+                                pass
                     else:
                         # Для старых записей без admin_messages — просто текст
                         notif = await bot.send_message(
