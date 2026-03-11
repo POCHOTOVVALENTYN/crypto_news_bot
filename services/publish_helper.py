@@ -300,6 +300,21 @@ async def prepare_news_for_moderation(news_item: Dict) -> Dict:
         except Exception:
             pass
 
+    # БАГ 12 ИСПРАВЛЕН: Очищаем текст от мусора ПЕРЕД анализом
+    from services.message_builder import AdvancedMessageFormatter as AMF
+    summary = AMF.clean_text(summary) if summary else ""
+
+    # БАГ 13 ИСПРАВЛЕН: Дедупликация ПЕРЕД AI (убираем заголовок из начала тела)
+    # Используем порог 0.85 для безопасности
+    dedup_result = await ContentDeduplicator.smart_summarize(
+        title=title,
+        description=summary,
+        key_points=[],
+        dedup_threshold=0.85
+    )
+    title = dedup_result['title']
+    summary = dedup_result['content']
+
     # 3. AI-выжимка: digest tone → 150-200 симв
     body = summary
     if summary:
@@ -312,12 +327,12 @@ async def prepare_news_for_moderation(news_item: Dict) -> Dict:
                 tone="digest"
             )
             if digest_text:
-                body = digest_text
+                # БАГ 12 ИСПРАВЛЕН: Финальная очистка результата ИИ
+                body = AMF.clean_text(digest_text)
                 logger.info(f"✅ Digest-выжимка: {len(body)} симв")
         except Exception as e:
             logger.warning(f"⚠️ Digest AI failed, using raw summary: {e}")
             # Fallback: обрезаем summary до 200 симв по предложению
-            from services.message_builder import AdvancedMessageFormatter as AMF
             body = AMF._smart_truncate(summary, 200) if len(summary) > 200 else summary
 
     # 4. Однострочные цены (не вызываем если не нужно — берём только основные)
