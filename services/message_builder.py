@@ -190,7 +190,7 @@ class AdvancedMessageFormatter:
         footer = self.create_channel_footer()
         
         full_text = header
-        if content_text:
+        if content_text and content_text.strip():
             full_text += f"\n\n{content_text.strip()}"
         if points_text:
             full_text += f"\n\n{points_text.strip()}"
@@ -277,7 +277,8 @@ class AdvancedMessageFormatter:
             "��<a href='https://t.me/blexler_invest'>BLEXLER TELEGRAM</a>🔸"
         )
 
-    def clean_text(self, text: str) -> str:
+    @staticmethod
+    def clean_text(text: str) -> str:
         """Очистка текста от мусора, меншнов, ссылок и лишних символов"""
         if not text:
             return ""
@@ -367,16 +368,33 @@ class RichMediaMessage:
     async def send(self, bot, chat_id: int):
         try:
             if self.image_url:
-                if not isinstance(self.image_url, str) or not self.image_url.startswith('http'):
+                is_url = isinstance(self.image_url, str) and self.image_url.startswith('http')
+                import os
+                is_local = isinstance(self.image_url, str) and os.path.exists(self.image_url)
+                
+                if not is_url and not is_local:
                     logging.getLogger(__name__).warning(
-                        f"⚠️ Невалидный image_url: {repr(self.image_url)[:80]}"
+                        f"⚠️ Невалидная ссылка или путь к фото: {repr(self.image_url)[:80]}"
                     )
                 else:
-                    # БАГ 3 ИСПРАВЛЕН: image proxy — скачиваем и отправляем как FSInputFile
-                    # Это обходит 403 Forbidden от CDN при hotlinking
-                    sent = await self._try_send_photo(bot, chat_id)
-                    if sent:
-                        return sent
+                    if is_local:
+                        # Отправляем локальный файл напрямую
+                        from aiogram.types import FSInputFile
+                        sent = await bot.send_photo(
+                            chat_id=chat_id,
+                            photo=FSInputFile(self.image_url),
+                            caption=self.text,
+                            parse_mode="HTML",
+                            reply_markup=self.reply_markup
+                        )
+                        if sent:
+                            return sent
+                    else:
+                        # БАГ 3 ИСПРАВЛЕН: image proxy — скачиваем и отправляем как FSInputFile
+                        # Это обходит 403 Forbidden от CDN при hotlinking
+                        sent = await self._try_send_photo(bot, chat_id)
+                        if sent:
+                            return sent
             
             # Fallback к текстовому сообщению (без фото)
             return await bot.send_message(

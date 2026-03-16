@@ -205,20 +205,32 @@ class BreakingNewsModerator:
             # БАГ 7 ИСПРАВЛЕН: добавлены «:», «"», «()» в whitelist
             # чтобы заголовки типа 'Lofty: "BTC упадёт"' не теряли смысл
             clean_title = re.sub(r'[^\w\s\.,!?\-\$\%\/\#\:\"\(\)]', '', title).strip()
-            display_title = clean_title[:80].upper() if clean_title else title[:80].upper()
+            
+            # ВАЖНО v12: Увеличиваем лимит заголовка до 160 и используем smart_truncate
+            from services.message_builder import AdvancedMessageFormatter as AMF
+            if clean_title:
+                display_title = AMF._smart_truncate(clean_title, 160).upper()
+            else:
+                display_title = AMF._smart_truncate(title, 160).upper()
             
             # Сборка карточки — чистый формат, без разделителей
             lines = [
                 f"🚨 <b>BREAKING NEWS</b>  |  Приоритет <b>{news_item.get('priority', '?')}/10</b>  |  ⏳ <i>{timeout_min} мин.</i>",
                 "",
-                f"📰 <b>{display_title}</b>",
             ]
-            if body:
+            
+            if not body:
+                # Режим "Только заголовок" — делаем его максимально заметным
+                lines.append(f"🔥 <b>{display_title}</b>")
+                lines.append("")
+                lines.append("<i>⚡️ Короткая новость без доп. контекста.</i>")
+            else:
+                lines.append(f"📰 <b>{display_title}</b>")
                 lines.append("")
                 lines.append(body.strip())
-            if prices_line:
-                lines.append("")
-                lines.append(f"📊 {prices_line}")
+            
+            # v12: Цены удалены из превью для админов (по запросу пользователя), 
+            # они будут только в финальной публикации.
             
             message_text = "\n".join(lines)
             

@@ -279,15 +279,15 @@ async def main():
             name="Subscription Expiry Check"
         )
         
-        # Авто-дожим продаж каждый час
-        from services.sales_followup import check_abandoned_purchases
-        scheduler.add_job(
-            check_abandoned_purchases,
-            IntervalTrigger(hours=1),
-            id="sales_followup",
-            name="Sales Follow-up"
-        )
-        logger.info("✅ Авто-дожим настроен")
+        # Авто-дожим продаж каждый час (ВРЕМЕННО ОТКЛЮЧЕН)
+        # from services.sales_followup import check_abandoned_purchases
+        # scheduler.add_job(
+        #     check_abandoned_purchases,
+        #     IntervalTrigger(hours=1),
+        #     id="sales_followup",
+        #     name="Sales Follow-up"
+        # )
+        # logger.info("✅ Авто-дожим настроен")
         
         # Личный планировщик в 8:00
         from services.personal_assistant import personal_assistant

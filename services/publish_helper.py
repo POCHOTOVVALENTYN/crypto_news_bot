@@ -4,6 +4,7 @@
 """
 import logging
 import asyncio
+import re
 from typing import Dict, Optional
 
 from loader import bot
@@ -329,7 +330,45 @@ async def prepare_news_for_moderation(news_item: Dict) -> Dict:
             if digest_text:
                 # БАГ 12 ИСПРАВЛЕН: Финальная очистка результата ИИ
                 body = AMF.clean_text(digest_text)
-                logger.info(f"✅ Digest-выжимка: {len(body)} симв")
+                
+                # v12: Дополнительная дедупликация (убираем заголовок из начала, если AI его решил оставить)
+                # Нормализуем для сравнения
+                clean_title_norm = re.sub(r'[^\w\s]', '', title.lower()).strip()
+                clean_body_norm = re.sub(r'[^\w\s]', '', body.lower()).strip()
+                
+                if clean_body_norm.startswith(clean_title_norm):
+                    # Убираем дубль
+                    body_start_pos = body.lower().find(title.lower())
+                    if body_start_pos != -1:
+                        body = body[body_start_pos + len(title):].strip()
+                    else:
+                        # Fallback если точного вхождения нет (разные знаки препинания)
+                        # Просто берем первые N слов заголовка и ищем их
+                        title_words = title.split()[:3]
+                        if title_words:
+                            first_phrase = " ".join(title_words).lower()
+                            first_pos = body.lower().find(first_phrase)
+                            if 0 <= first_pos < 50:
+                                body = body[first_pos + len(first_phrase):].strip()
+
+                # Удаляем возможные оставшиеся знаки препинания/артефакты в начале
+                body = re.sub(r'^[\.\,\:\-\s]+', '', body).strip()
+                
+                # v13: ИНТЕЛЛЕКТУАЛЬНЫЙ Headline-only mode
+                # Если тело новости слишком короткое или дублирует заголовок (fuzzy comparison)
+                from thefuzz import fuzz
+                
+                # Сходство заголовка и тела
+                similarity = fuzz.partial_ratio(title.lower(), body.lower())
+                
+                # Условия для переключения в "Только заголовок":
+                # 1. Слишком короткий текст (меньше 100 симв)
+                # 2. Высокое сходство (>75%)
+                if len(body) < 100 or similarity > 75:
+                    logger.info(f"⚡️ Активирован Headline-only mode (len={len(body)}, sim={similarity}%)")
+                    body = "" # Сигнал для модератора и билдера
+                else:
+                    logger.info(f"✅ Digest-выжимка: {len(body)} симв, сходство {similarity}%")
         except Exception as e:
             logger.warning(f"⚠️ Digest AI failed, using raw summary: {e}")
             # Fallback: обрезаем summary до 200 симв по предложению

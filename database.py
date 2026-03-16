@@ -1757,5 +1757,31 @@ class NewsDatabase:
             )
             await conn.commit()
 
+    async def track_funnel_step(self, user_id: int, step: str):
+        """Логирует шаг в воронку"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "INSERT INTO funnel_stats (user_id, step, happened_at) VALUES (?, ?, ?)",
+                    (user_id, step, datetime.now().isoformat())
+                )
+                await db.commit()
+        except Exception as e:
+            logger.error(f"Ошибка track_funnel_step: {e}")
+
+    async def count_user_activity(self, user_id: int, activity_type: str) -> int:
+        """Считает кол-во дожимов"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                async with db.execute(
+                    "SELECT COUNT(*) FROM funnel_stats WHERE user_id = ? AND step = ?",
+                    (user_id, activity_type)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    return row[0] if row else 0
+        except Exception as e:
+            logger.error(f"Ошибка count_user_activity: {e}")
+            return 0
+
 # Экспортируем экземпляр
 db = NewsDatabase()

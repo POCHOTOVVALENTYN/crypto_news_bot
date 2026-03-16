@@ -79,16 +79,16 @@ class AIProviderManager:
         Пытается сгенерировать текст, перебирая провайдеры по очереди.
         """
         errors = []
-        for provider in self.providers:
+        for i, provider in enumerate(self.providers):
             try:
                 # logger.debug(f"🔄 Trying {provider.name}...")
                 result = await provider.generate_text(prompt, system_prompt, **kwargs)
                 if result:
-                    # Добавляем метку провайдера скрыто или явно, если нужно (тут не меняем контент)
                     return result
             except Exception as e:
                 errors.append(f"{provider.name}: {str(e)}")
-                logger.warning(f"⚠️ {provider.name} failed: {e}")
+                next_provider = self.providers[i+1].name if i+1 < len(self.providers) else "NONE"
+                logger.warning(f"⚠️ AI FALLBACK: {provider.name} failed. Switching to {next_provider}. Error: {e}")
                 continue
         
         logger.error(f"❌ All AI providers failed. Errors: {errors}")
@@ -99,7 +99,7 @@ class AIProviderManager:
         Пытается получить JSON, перебирая провайдеры.
         """
         errors = []
-        for provider in self.providers:
+        for i, provider in enumerate(self.providers):
             try:
                 # logger.debug(f"🔄 Trying {provider.name} (JSON)...")
                 result = await provider.analyze_json(prompt, system_prompt, schema, **kwargs)
@@ -109,7 +109,8 @@ class AIProviderManager:
                     return result
             except Exception as e:
                 errors.append(f"{provider.name}: {str(e)}")
-                logger.warning(f"⚠️ {provider.name} failed (JSON): {e}")
+                next_provider = self.providers[i+1].name if i+1 < len(self.providers) else "NONE"
+                logger.warning(f"⚠️ AI JSON FALLBACK: {provider.name} failed. Switching to {next_provider}. Error: {e}")
                 continue
                 
         logger.error(f"❌ All AI providers failed (JSON). Errors: {errors}")
