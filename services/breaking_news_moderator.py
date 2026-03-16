@@ -28,9 +28,28 @@ def _sqlite_now() -> str:
     """Текущее UTC время в формате, совместимом с SQLite CURRENT_TIMESTAMP"""
     return datetime.utcnow().strftime(_SQLITE_FMT)
 
+from zoneinfo import ZoneInfo
+
 def _sqlite_dt(dt: datetime) -> str:
     """datetime → SQLite-совместимая строка"""
     return dt.strftime(_SQLITE_FMT)
+
+def is_quiet_hours() -> bool:
+    """
+    Проверяет, включен ли сейчас "Тихий час" для Breaking News.
+    Время: 23:00 - 06:59 по часовому поясу из config (обычно Europe/Kyiv).
+    """
+    try:
+        tz = ZoneInfo(config.timezone)
+        now_local = datetime.now(tz)
+        
+        # 23:00 до 23:59 ИЛИ 00:00 до 06:59
+        if now_local.hour >= 23 or now_local.hour < 7:
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Ошибка проверки тихого часа: {e}")
+        return False
 
 
 class BreakingNewsModerator:
@@ -55,6 +74,10 @@ class BreakingNewsModerator:
         Вызывается планировщиком каждые 30 секунд
         """
         try:
+            # БЛОКИРОВКА В ТИХИЙ ЧАС (Ночью)
+            if is_quiet_hours():
+                return
+                
             # Получаем новости с priority >= 9 без модерации
             breaking_news_list = await self._get_unmoderated_breaking_news()
             
@@ -70,7 +93,7 @@ class BreakingNewsModerator:
             logger.error(f"❌ Ошибка detect_and_notify_admins: {e}", exc_info=True)
     
     async def _get_unmoderated_breaking_news(self) -> List[Dict]:
-        """Получить breaking news без модерации"""
+        """Получить свежие breaking news без модерации (не старше 2 часов)"""
         try:
             async with db.conn.execute(
                 """
@@ -80,6 +103,7 @@ class BreakingNewsModerator:
                 AND n.posted_to_telegram = 0
                 AND n.digest_batch_id IS NULL
                 AND pbn.id IS NULL
+                AND n.added_at >= datetime('now', '-2 hours')
                 ORDER BY n.added_at ASC
                 LIMIT 5
                 """,
@@ -475,6 +499,10 @@ class BreakingNewsModerator:
         от того, есть ли истёкшие новости. Разделено на два независимых блока.
         """
         try:
+            # БЛОКИРОВКА В ТИХИЙ ЧАС (Ночью)
+            if is_quiet_hours():
+                return
+                
             now_utc = datetime.utcnow()
             
             # Таймаут из БД (настраиваемый админом)
