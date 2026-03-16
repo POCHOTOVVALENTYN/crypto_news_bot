@@ -28,7 +28,7 @@ class NewsAnalyzer:
 "{text}"
 
 ЗАДАЧА:
-1. Определить КРИТИЧЕСКУЮ ВАЖНОСТЬ новости (0-10)
+1. Определить КРИТИЧЕСКУЮ ВАЖНОСТЬ новости строго по ЛОГАРИФМИЧЕСКОЙ ШКАЛЕ (0-100)
 2. Создать цепляющий заголовок на русском (до 10 слов)
 3. Написать краткое описание (2-3 предложения, только суть)
 4. Указать монету (BTC, ETH, SOL, или Market)
@@ -38,19 +38,18 @@ class NewsAnalyzer:
 8. why_it_matters: 1 предложение, объясняющее почему это важно для инвестора.
 9. market_impact: High / Medium / Low
 
-КРИТЕРИИ ВАЖНОСТИ:
-- 10 (Critical): Взломы, банкротства, критические регуляторные решения
-- 9 (Very High): ETF одобрения, крупные листинги, институциональные инвестиции >$100M
-- 8 (High): Регуляторные новости, средние листинги, заявления ключевых персон
-- 7 (High): Крупные транзакции >$50M, важные обновления протоколов
-- 6 (Medium): Значимые обновления, средние новости
-- 4-5 (Medium): Обычные новости
-- 0-3 (Low): Низкая важность, рутинные обновления
+КРИТЕРИИ ЛОГАРИФМИЧЕСКОЙ ШКАЛЫ (importance_score):
+- 95-100 (Black Swan): Глобальный крах, США признали BTC нелегальным, Binance взломали на $1B+.
+- 85-94 (Macro Event): Одобрение ETF, ФРС изменил ставку, взлом TIER-1 биржи.
+- 75-84 (Strong Move): Взлом DeFi >$50M, крупный листинг, арест CEO.
+- 60-74 (Local Trend): Мелкие листинги, партнерства, апдейты, высказывания Илона Маска.
+- 0-59 (Noise): Инфошум, мелкие аирдропы, аналитика "биткоин может вырасти".
+БУДЬ ПРЕДЕЛЬНО СКЕПТИЧЕН К НОВОСТЯМ. Большинство новостей — инфошум (0-59).
 
 ВАЖНО:
 - Заголовок должен быть информативным и цепляющим
 - Описание - только ключевая информация, без воды
-- Если новость не относится к крипто - верни importance: "Low"
+- Если новость не относится к крипто - верни importance_score 0
 - НЕ ИСПОЛЬЗУЙ MARKDOWN СИНТАКСИС ([text](url), **bold**, _italic_)
 - Используй только обычный текст без форматирования
 - Не добавляй квадратные скобки [] в заголовок или описание
@@ -58,7 +57,7 @@ class NewsAnalyzer:
 ФОРМАТ ОТВЕТА (только JSON, без Markdown):
 {{
     "importance": "Critical|Very High|High|Medium|Low",
-    "importance_score": 10,
+    "importance_score": 50,
     "ru_title": "...",
     "ru_summary": "...",
     "coin": "BTC|ETH|SOL|Market",
@@ -72,10 +71,64 @@ class NewsAnalyzer:
         # Менеджер сам попробует Gemini -> DeepSeek -> OpenAI
         result = await self.ai_manager.analyze_json(
             prompt=prompt, 
-            system_prompt="You are a crypto news editor. Output only valid JSON. Never use Markdown syntax in text fields."
+            system_prompt="You are a strict, skeptical crypto news editor. Output only valid JSON. Never use Markdown syntax in text fields."
         )
         
         return result
+
+    async def curate_news_batch(self, news_list: list[Dict], max_winners: int = 2) -> List[int]:
+        """
+        ИИ-Куратор (Ежечасный отбор).
+        Принимает список новостей и возвращает ID победителей (не более max_winners).
+        """
+        if not news_list:
+            return []
+
+        if len(news_list) <= max_winners:
+            # Если новостей и так мало, можно вернуть все ID (опционально)
+            # Но правильнее спросить ИИ, вдруг там один инфошум
+            pass
+
+        input_text = ""
+        for i, news in enumerate(news_list):
+            input_text += f"ID: {news.get('id')}\n"
+            input_text += f"Title: {news.get('title', 'Без заголовка')}\n"
+            input_text += f"Summary: {news.get('summary', '')[:200]}...\n"
+            input_text += f"Priority: {news.get('priority', 0)}\n\n"
+
+        prompt = f"""Ты — Главный Редактор премиального крипто-канала.
+Твоя цель: отбирать только самые важные новости, спасая читателей от инфошума.
+Ниже список из {len(news_list)} новостей, накопившихся за последний час.
+
+СПИСОК НОВОСТЕЙ:
+{input_text}
+
+ЗАДАЧА:
+Выбери от 0 до {max_winners} новостей, которые ОБЯЗАТЕЛЬНЫ к немедленной публикации.
+Ищи реальные факты: крупные взломы, важные листинги, движение китов, ETF, регуляция институционального уровня.
+Обычные новости, слухи и мелкие анонсы — игнорируй. Если за час не произошло ничего глобального, верни пустой список (это нормально!).
+
+ФОРМАТ ОТВЕТА (строго JSON):
+{{
+    "winner_ids": [123, 456],
+    "explanation": "Почему выбраны именно они (или почему отброшены все)."
+}}"""
+
+        result = await self.ai_manager.analyze_json(
+            prompt=prompt,
+            system_prompt="You are an Editor-in-Chief. Output only valid JSON with 'winner_ids' containing integer IDs."
+        )
+
+        if not result:
+            logger.error("❌ Куратор-ИИ не ответил или вернул невалидный JSON")
+            return []
+
+        winner_ids = result.get('winner_ids', [])
+        # Очистка на случай, если ИИ вернул строки
+        winner_ids = [int(w_id) for w_id in winner_ids if str(w_id).isdigit()]
+        
+        # Защита от возврата большего количества, чем просили
+        return winner_ids[:max_winners]
 
     async def rewrite_for_telegram(
         self,

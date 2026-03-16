@@ -67,47 +67,89 @@ class BreakingNewsModerator:
     def __init__(self):
         self.processing_lock = asyncio.Lock()
     
-    async def detect_and_notify_admins(self):
+    async def detect_emergency_news(self):
         """
-        Обнаружить breaking news и отправить админам на модерацию
-        
-        Вызывается планировщиком каждые 30 секунд
+        🔥 Black Swans: Запуск каждые 45 минут (по запросу юзера).
+        Выводит только priority = 10 (ЧС). Пропускает ИИ-куратора.
         """
         try:
-            # БЛОКИРОВКА В ТИХИЙ ЧАС (Ночью)
             if is_quiet_hours():
                 return
                 
-            # Получаем новости с priority >= 9 без модерации
-            breaking_news_list = await self._get_unmoderated_breaking_news()
+            emergency_list = await self._get_unmoderated_breaking_news(min_priority=10, max_priority=10)
             
-            if not breaking_news_list:
+            if not emergency_list:
                 return
             
-            logger.info(f"🔥 Обнаружено {len(breaking_news_list)} breaking news для модерации")
+            logger.info(f"🚨 ЧРЕЗВЫЧАЙНАЯ НОВОСТЬ: Обнаружено {len(emergency_list)} Black Swan(s)")
             
-            for news_item in breaking_news_list:
+            for news_item in emergency_list:
                 await self._create_moderation_request(news_item)
                 
         except Exception as e:
-            logger.error(f"❌ Ошибка detect_and_notify_admins: {e}", exc_info=True)
+            logger.error(f"❌ Ошибка detect_emergency_news: {e}", exc_info=True)
+
+    async def curate_hourly_news(self):
+        """
+        🧐 ИИ-Куратор: Запуск каждый час. 
+        Собирает новости priority 6-9 за последние 2 часа и выбирает ТОП-1-2.
+        Отсеянные получают статус 'discarded_by_ai'.
+        """
+        try:
+            if is_quiet_hours():
+                return
+                
+            curatable_list = await self._get_unmoderated_breaking_news(min_priority=6, max_priority=9)
+            
+            if not curatable_list:
+                return
+            
+            logger.info(f"🧐 ИИ-КУРАТОР: Накопилось {len(curatable_list)} новостей для оценки.")
+            
+            if len(curatable_list) == 1:
+                # Если всего одна новость, отправляем без ИИ
+                logger.info("🧐 ИИ-КУРАТОР: У нас только 1 новость за час, пускаем сразу.")
+                await self._create_moderation_request(curatable_list[0])
+                return
+
+            from services.ai_summary import NewsAnalyzer
+            ai_analyzer = NewsAnalyzer()
+            
+            # ИИ выбирает победителей
+            winner_ids = await ai_analyzer.curate_news_batch(curatable_list, max_winners=2)
+            
+            if not winner_ids:
+                logger.info("🧐 ИИ-КУРАТОР: Все новости забракованы (инфошум).")
+            
+            for news_item in curatable_list:
+                news_id = news_item.get('id')
+                if news_id in winner_ids:
+                    logger.info(f"🏆 КУРАТОР РЕКОМЕНДУЕТ (ID {news_id}): {news_item.get('title')}")
+                    await self._create_moderation_request(news_item)
+                else:
+                    logger.debug(f"🗑 КУРАТОР ОТСЕЯЛ (ID {news_id}): {news_item.get('title')}")
+                    # Помечаем как отброшенную
+                    await self._discard_news_silently(news_item['url'])
+                    
+        except Exception as e:
+            logger.error(f"❌ Ошибка curate_hourly_news: {e}", exc_info=True)
     
-    async def _get_unmoderated_breaking_news(self) -> List[Dict]:
-        """Получить свежие breaking news без модерации (не старше 2 часов)"""
+    async def _get_unmoderated_breaking_news(self, min_priority: int, max_priority: int = 10) -> List[Dict]:
+        """Получить свежие breaking news без модерации"""
         try:
             async with db.conn.execute(
                 """
                 SELECT n.* FROM news n
                 LEFT JOIN pending_breaking_news pbn ON n.url = pbn.news_url
-                WHERE n.priority >= ?
+                WHERE n.priority >= ? AND n.priority <= ?
                 AND n.posted_to_telegram = 0
                 AND n.digest_batch_id IS NULL
                 AND pbn.id IS NULL
                 AND n.added_at >= datetime('now', '-2 hours')
-                ORDER BY n.added_at ASC
-                LIMIT 5
+                ORDER BY n.priority DESC, n.added_at ASC
+                LIMIT 10
                 """,
-                (self.BREAKING_PRIORITY_THRESHOLD,)
+                (min_priority, max_priority)
             ) as cursor:
                 cursor.row_factory = lambda c, r: dict(zip([col[0] for col in c.description], r))
                 rows = await cursor.fetchall()
@@ -115,6 +157,17 @@ class BreakingNewsModerator:
         except Exception as e:
             logger.error(f"❌ Ошибка получения breaking news: {e}", exc_info=True)
             return []
+            
+    async def _discard_news_silently(self, news_url: str):
+        """Отсеять новость (добавить в pending_breaking_news, но как отклоненную)"""
+        try:
+            async with db.conn.execute(
+                "INSERT INTO pending_breaking_news (news_url, admin_decision, decision_at) VALUES (?, 'discarded_by_ai', CURRENT_TIMESTAMP)",
+                (news_url,)
+            ):
+                await db.conn.commit()
+        except Exception as e:
+            logger.error(f"❌ Ошибка при отсеивании куратором: {e}")
     
     async def _create_moderation_request(self, news_item: Dict):
         """Создать запрос на модерацию: два pipeline — публикация (WYSIWYG) и превью (краткая карточка)"""

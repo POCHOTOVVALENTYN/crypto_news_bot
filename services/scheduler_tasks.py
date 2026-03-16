@@ -66,9 +66,19 @@ async def scheduled_parsing():
             duplicate_count += 1
             continue
         
-        # Расчет приоритета БЕЗ AI (быстро, без запросов к API)
-        # AI анализ будет выполняться только при публикации для перевода и улучшения
+        # Расчет приоритета БЕЗ AI (пока)
         priority = PriorityCalculator.calculate_priority(news, None)
+        
+        # Если новость потенциально важная (priority >= 5) и нужна ИИ-оценка
+        ai_data_for_db = None
+        if priority >= 5 and PriorityCalculator.needs_ai_processing(news):
+            text_for_ai = news['title'] + " " + news.get('summary', '')
+            try:
+                ai_data_for_db = await ai_analyzer.analyze_text(text_for_ai)
+                # Пересчитываем приоритет с учетом мнения ИИ
+                priority = PriorityCalculator.calculate_priority(news, ai_data_for_db)
+            except Exception as e:
+                logger.error(f"❌ Ошибка ИИ-скоринга при парсинге: {e}")
         
         # Фильтруем только нулевой приоритет (совсем нерелевантные новости)
         # Priority используется для сортировки, а не для жесткой фильтрации
@@ -77,6 +87,10 @@ async def scheduled_parsing():
             logger.debug(f"⏭️ Пропуск нулевой приоритет (priority={priority}): {news['title'][:50]}")
             filtered_count += 1
             continue
+            
+        category = ai_data_for_db.get('category') if ai_data_for_db else None
+        sentiment_score = ai_data_for_db.get('sentiment_score') if ai_data_for_db else None
+        why_it_matters = ai_data_for_db.get('why_it_matters') if ai_data_for_db else None
         
         # Сохраняем
         success = await db.add_news(
@@ -87,7 +101,10 @@ async def scheduled_parsing():
             published_at=news['published'],
             image_url=news.get('image_url'),
             priority=priority,
-            full_content=news.get('full_content', '')  # ✅ НОВОЕ: Сохраняем полный текст
+            full_content=news.get('full_content', ''),
+            category=category,
+            sentiment_score=sentiment_score,
+            why_it_matters=why_it_matters
         )
         
         if success:

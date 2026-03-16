@@ -10,46 +10,46 @@ class PriorityCalculator:
     
     # Ключевые слова с весами важности
     CRITICAL_KEYWORDS = {
-        # Критические события
-        'hack': 10, 'hacked': 10, 'взлом': 10, 'взломали': 10,
-        'exploit': 9, 'breach': 9, 'security breach': 10,
+        # Критические события (Понижено с 10 до 9, чтобы 10 давал только ИИ)
+        'hack': 9, 'hacked': 9, 'взлом': 9, 'взломали': 9,
+        'exploit': 8, 'breach': 8, 'security breach': 9,
         'bankruptcy': 9, 'банкротство': 9, 'bankrupt': 9,
         
         # ETF и регуляция
         'etf approved': 9, 'etf approval': 9, 'etf одобрен': 9,
-        'sec approval': 9, 'sec одобрил': 9,
+        'sec approval': 8, 'sec одобрил': 8,
         'sec rejects': 8, 'etf rejected': 8, 'etf отклонен': 8,
         'regulation': 6, 'регуляция': 6, 'regulatory': 6,
         
         # Листинги
-        'listing': 7, 'листинг': 7, 'listed': 7,
-        'coinbase listing': 8, 'binance listing': 8,
+        'listing': 6, 'листинг': 6, 'listed': 6,
+        'coinbase listing': 7, 'binance listing': 7,
         'delisting': 6, 'делистинг': 6,
         
         # Институциональные
-        'blackrock': 8, 'microstrategy': 8, 'grayscale': 7,
-        'institutional': 7, 'институционалы': 7,
-        'fidelity': 7, 'vanguard': 7,
+        'blackrock': 7, 'microstrategy': 7, 'grayscale': 6,
+        'institutional': 6, 'институционалы': 6,
+        'fidelity': 6, 'vanguard': 6,
         
-        # Макроэкономика (НОВОЕ)
-        'cpi': 8, 'inflation': 8, 'инфляция': 8,
-        'fed rate': 9, 'powell speech': 8, 'fomc': 9, 'key rate': 8,
-        'rate hike': 8, 'rate cut': 9, 'ставка фрс': 9,
+        # Макроэкономика
+        'cpi': 7, 'inflation': 7, 'инфляция': 7,
+        'fed rate': 8, 'powell speech': 7, 'fomc': 8, 'key rate': 7,
+        'rate hike': 8, 'rate cut': 8, 'ставка фрс': 8,
         
-        # Технический анализ и рыночные движения (НОВОЕ)
-        'ath': 7, 'all time high': 8, 'historical maximum': 8,
-        'breakout': 6, 'support level': 5, 'resistance level': 5,
-        'golden cross': 6, 'death cross': 6,
+        # Технический анализ и рыночные движения
+        'ath': 7, 'all time high': 7, 'historical maximum': 7,
+        'breakout': 5, 'support level': 4, 'resistance level': 4,
+        'golden cross': 5, 'death cross': 5,
         
-        # Тренды и технологии (НОВОЕ)
-        'ai token': 7, 'depin': 7, 'rwa': 7, 'memecoin': 5,
-        'layer2': 6, 'zk-rollup': 6, 'airdrop': 7, 'snapshot': 6,
-        'mainnet launch': 8, 'testnet': 5,
+        # Тренды и технологии
+        'ai token': 6, 'depin': 6, 'rwa': 6, 'memecoin': 5,
+        'layer2': 5, 'zk-rollup': 5, 'airdrop': 6, 'snapshot': 5,
+        'mainnet launch': 7, 'testnet': 4,
         
         # Персоны
-        'elon musk': 8, 'маск': 8, 'elon': 7,
-        'michael saylor': 7, 'сайлор': 7,
-        'gary gensler': 7, 'sec chairman': 7,
+        'elon musk': 7, 'маск': 7, 'elon': 6,
+        'michael saylor': 6, 'сайлор': 6,
+        'gary gensler': 6, 'sec chairman': 6,
         'jerome powell': 6, 'джером пауэлл': 6,
         'cz binance': 6, 'changpeng zhao': 6,
     }
@@ -106,29 +106,33 @@ class PriorityCalculator:
             # Новости от известных источников имеют минимальный приоритет
             priority = 1
         
-        # 5. AI анализ важности
+        # 5. AI анализ важности (Шкала 0-100)
         if ai_data:
-            importance = ai_data.get('importance', '').lower()
             importance_score = ai_data.get('importance_score', 0)
             
-            if importance == 'critical':
-                priority = max(priority, 9)
-            elif importance == 'very high':
-                priority = max(priority, 8)
-            elif importance == 'high':
-                priority = max(priority, 7)
-            elif importance == 'medium':
-                priority = max(priority, 5)
-            
-            # Используем score если доступен
-            if isinstance(importance_score, (int, float)) and importance_score > 0:
-                priority = max(priority, min(int(importance_score), 10))
+            # Конвертация логарифмической 100-балльной шкалы в базовую 10-балльную
+            if isinstance(importance_score, (int, float)):
+                if importance_score >= 95:
+                    priority = 10
+                elif importance_score >= 85:
+                    priority = max(priority, 9)
+                elif importance_score >= 75:
+                    priority = max(priority, 8)
+                elif importance_score >= 60:
+                    priority = max(priority, 7)
+                elif importance_score >= 40:
+                    priority = max(priority, 5)
+                elif importance_score >= 20:   # Инфошум
+                    priority = max(priority, 3)
+                else: 
+                    # Явный мусор, понижаем приоритет если он был завышен словами вроде ETF
+                    priority = min(priority, 4)
         
-        # 6. Insider источники - максимальный приоритет
+        # 6. Insider источники - приоритет 9 (не 10, чтобы избежать авто-пуска без куратора)
         if 'insider' in source:
-            priority = 10
-            logger.debug("Insider источник → приоритет 10")
-        
+            priority = max(priority, 9)
+            logger.debug("Insider источник → приоритет 9")
+            
         return min(priority, 10)  # Ограничиваем максимумом 10
 
     @staticmethod

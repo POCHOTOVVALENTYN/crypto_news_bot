@@ -223,15 +223,24 @@ async def main():
         # )
         # logger.info("✅ 1-часовой дайджест настроен")
         
-        # ✅ НОВОЕ: Мониторинг breaking news (каждые 30 секунд)
+        # ✅ НОВОЕ: Мониторинг ЧС (экстренные новости, priority=10) каждые 45 минут
         from services.breaking_news_moderator import breaking_moderator
         scheduler.add_job(
-            breaking_moderator.detect_and_notify_admins,
-            IntervalTrigger(seconds=30),
-            id="breaking_news_monitor",
-            name="Breaking News Monitor"
+            breaking_moderator.detect_emergency_news,
+            IntervalTrigger(minutes=45),
+            id="breaking_news_emergency",
+            name="Breaking News Emergency Monitor"
         )
-        logger.info("✅ Мониторинг breaking news настроен")
+        logger.info("✅ Экстренный мониторинг ЧС настроен (раз в 45 мин)")
+
+        # ✅ НОВОЕ: ИИ-Куратор обычных хороших новостей (priority 6-9) каждый час
+        scheduler.add_job(
+            breaking_moderator.curate_hourly_news,
+            IntervalTrigger(minutes=60),
+            id="breaking_news_hourly_curator",
+            name="Breaking News Hourly Curator"
+        )
+        logger.info("✅ Ежечасный ИИ-Куратор новостей настроен")
         
         # ✅ НОВОЕ: Автопубликация истекших breaking news (каждую минуту)
         # ✅ НОВОЕ: Обработка истекших breaking news (отмена публикации)
