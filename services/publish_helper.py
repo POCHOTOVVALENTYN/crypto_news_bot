@@ -374,31 +374,17 @@ async def prepare_news_for_moderation(news_item: Dict) -> Dict:
             # Fallback: обрезаем summary до 200 симв по предложению
             body = AMF._smart_truncate(summary, 200) if len(summary) > 200 else summary
 
-    # 4. Однострочные цены (не вызываем если не нужно — берём только основные)
-    prices_parts = []
-    try:
-        prices = await get_multiple_crypto_prices()
-        if prices:
-            btc = prices.get('bitcoin')
-            eth = prices.get('ethereum')
-            if btc:
-                sign = '+' if btc['change'] >= 0 else ''
-                prices_parts.append(f"BTC ${btc['price']:,.0f} ({sign}{btc['change']:.1f}%)")
-            if eth:
-                sign = '+' if eth['change'] >= 0 else ''
-                prices_parts.append(f"ETH ${eth['price']:,.0f} ({sign}{eth['change']:.1f}%)")
-        fear_greed = await FearGreedIndexTracker.get_fear_greed_index()
-        if fear_greed:
-            prices_parts.append(f"F&G: {fear_greed.get('value', '?')}/100")
-    except Exception:
-        pass
-
-    prices_line = " • ".join(prices_parts) if prices_parts else ""
+    # 4. Цены и индекс страха удалены из превью модератора (Оптимизация API)
+    # Они будут добавляться только при финальной публикации `prepare_news_for_publish`
+    
+    source = news_item.get('source', 'Неизвестно')
+    image_url = news_item.get('image_url')
 
     return {
         'title': title,
         'body': body,
-        'prices_line': prices_line,
+        'source': source,
+        'image_url': image_url
     }
 
 

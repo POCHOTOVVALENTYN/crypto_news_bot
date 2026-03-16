@@ -264,35 +264,48 @@ class BreakingNewsModerator:
             except (ValueError, TypeError):
                 timeout_min = self.AUTO_PUBLISH_TIMEOUT_MINUTES
 
-            # Если moderation_card не предан — формируем через старый путь (обратная совместимость)
+            priority = news_item.get('priority', 0)
+            
+            # Если moderation_card не передан — формируем через старый путь (обратная совместимость)
             if moderation_card is None:
                 title = news_item.get('title', 'Breaking News')
                 body = news_item.get('summary', '')
                 if len(body) > 200:
                     from services.message_builder import AdvancedMessageFormatter as AMF
                     body = AMF._smart_truncate(body, 200)
-                prices_line = ''
+                source = news_item.get('source', 'Неизвестно')
+                image_url = news_item.get('image_url')
             else:
                 title = moderation_card.get('title') or news_item.get('title', 'Breaking News')
                 body = moderation_card.get('body', '')
-                prices_line = moderation_card.get('prices_line', '')
+                source = moderation_card.get('source') or news_item.get('source', 'Неизвестно')
+                image_url = moderation_card.get('image_url') or news_item.get('image_url')
             
-            # Чистим заголовок от спецсимволов (оставляем только буквы, цифры, основную пунктуацию)
-            import re
-            # БАГ 7 ИСПРАВЛЕН: добавлены «:», «"», «()» в whitelist
-            # чтобы заголовки типа 'Lofty: "BTC упадёт"' не теряли смысл
-            clean_title = re.sub(r'[^\w\s\.,!?\-\$\%\/\#\:\"\(\)]', '', title).strip()
+            # Используем безопасную очистку, оставляя скобки, кавычки и важные символы
+            from services.message_builder import AdvancedMessageFormatter as AMF
+            clean_title = AMF.clean_text(title)
             
             # ВАЖНО v12: Увеличиваем лимит заголовка до 160 и используем smart_truncate
-            from services.message_builder import AdvancedMessageFormatter as AMF
             if clean_title:
                 display_title = AMF._smart_truncate(clean_title, 160).upper()
             else:
                 display_title = AMF._smart_truncate(title, 160).upper()
             
+            # Визуальное разделение (ЧС vs Куратор)
+            if priority >= 10:
+                header_line = f"🚨 <b>ЭКСТРЕННО (Black Swan)</b>  |  Приоритет <b>{priority}/10</b>  |  ⏳ <i>{timeout_min} мин.</i>"
+            else:
+                header_line = f"🧐 <b>ВЫБОР ИИ-КУРАТОРА</b>  |  Приоритет <b>{priority}/10</b>  |  ⏳ <i>{timeout_min} мин.</i>"
+
+            # Сборка источника и фото
+            source_parts = [f"<i>Источник: {source}</i>"]
+            if image_url:
+                source_parts.append(f"<a href='{image_url}'>[🖼 Фото]</a>")
+            footer_line = " • ".join(source_parts)
+
             # Сборка карточки — чистый формат, без разделителей
             lines = [
-                f"🚨 <b>BREAKING NEWS</b>  |  Приоритет <b>{news_item.get('priority', '?')}/10</b>  |  ⏳ <i>{timeout_min} мин.</i>",
+                header_line,
                 "",
             ]
             
@@ -305,6 +318,9 @@ class BreakingNewsModerator:
                 lines.append(f"📰 <b>{display_title}</b>")
                 lines.append("")
                 lines.append(body.strip())
+            
+            lines.append("")
+            lines.append(footer_line)
             
             # v12: Цены удалены из превью для админов (по запросу пользователя), 
             # они будут только в финальной публикации.
