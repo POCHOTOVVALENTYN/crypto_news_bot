@@ -249,6 +249,10 @@ async def prepare_news_for_publish(news_item: Dict, is_breaking: bool = False) -
         except Exception as e:
             logger.debug(f"Ошибка обработки metadata: {e}")
     
+    msg_data['raw_title'] = title
+    msg_data['raw_summary'] = summary
+    msg_data['source'] = news_item.get('source', 'Неизвестно')
+    
     return msg_data
 
 

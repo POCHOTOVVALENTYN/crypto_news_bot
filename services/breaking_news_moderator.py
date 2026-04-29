@@ -198,14 +198,21 @@ class BreakingNewsModerator:
             logger.info(f"📋 Создан запрос #{pending_id}: {news_item['title'][:50]}")
             
             # ── Pipeline 1: Полная публикация для канала (WYSIWYG) ──────────────────
-            from services.publish_helper import prepare_news_for_publish, prepare_news_for_moderation
+            from services.publish_helper import prepare_news_for_publish
             news_copy = dict(news_item)
             channel_data = await prepare_news_for_publish(news_copy, is_breaking=True)
             logger.info(f"✅ Channel pipeline: {len(channel_data.get('text',''))} симв")
             
             # ── Pipeline 2: Краткое превью для администратора ───────────────────────
-            moderation_card = await prepare_news_for_moderation(dict(news_item))
-            logger.info(f"✅ Moderation preview: {len(moderation_card.get('body',''))} симв")
+            # БЕРЕМ ДАННЫЕ ИЗ PIPELINE 1, чтобы избежать двойного вызова ИИ и рассинхрона
+            from services.message_builder import AdvancedMessageFormatter as AMF
+            moderation_card = {
+                'title': channel_data.get('raw_title') or news_item.get('title'),
+                'body': AMF._smart_truncate(channel_data.get('raw_summary') or news_item.get('summary', ''), 250),
+                'source': channel_data.get('source') or news_item.get('source', 'Неизвестно'),
+                'image_url': channel_data.get('image_url')
+            }
+            logger.info(f"✅ Moderation preview (из Pipeline 1): {len(moderation_card.get('body',''))} симв")
             
             # Отправляем всем админам (краткую карточку + кнопки)
             admin_msg_ids: Dict[int, int] = {}
@@ -362,7 +369,7 @@ class BreakingNewsModerator:
         try:
             # Получаем данные запроса
             async with db.conn.execute(
-                "SELECT * FROM pending_breaking_news WHERE id = ?",
+                "SELECT p.*, n.title FROM pending_breaking_news p LEFT JOIN news n ON p.news_url = n.url WHERE p.id = ?",
                 (pending_id,)
             ) as cursor:
                 cursor.row_factory = lambda c, r: dict(zip([col[0] for col in c.description], r))
@@ -404,29 +411,62 @@ class BreakingNewsModerator:
             # Удаляем reminder-сообщения у всех сразу (они уже неактуальны)
             asyncio.create_task(self._delete_reminder_messages(pending, delay=1))
             
-            # БАГ 7 ИСПРАВЛЕН: обновляем карточку у одобрившего admin (чистый статус, убираем кнопки)
+            # БАГ 7 ИСПРАВЛЕН: обновляем карточку у одобрившего admin (интерактивный чек публикации)
             if decision == 'approved':
                 try:
-                    emoji_self = "✅"
+                    title = pending.get('title', 'Breaking News')
+                    from services.message_builder import AdvancedMessageFormatter as AMF
+                    display_title = AMF._smart_truncate(title, 160).upper()
+                    from datetime import datetime
+                    
+                    receipt_text = (
+                        f"✅ <b>УСПЕШНО ОПУБЛИКОВАНО</b>\n\n"
+                        f"📰 <b>{display_title}</b>\n\n"
+                        f"👤 Одобрил: Вы\n"
+                        f"⏱ Время: {datetime.now().strftime('%H:%M:%S')}\n\n"
+                        f"🔗 <a href='https://t.me/blexler_invest'>Перейти к каналу</a>"
+                    )
+                    
                     if callback_query.message.photo:
                         await callback_query.message.edit_caption(
-                            caption=f"{emoji_self} <b>Вы одобрили</b> breaking news\n<i>ID: {pending_id} — публикую в канал...</i>",
+                            caption=receipt_text,
                             parse_mode="HTML",
                             reply_markup=None
                         )
                     else:
                         await callback_query.message.edit_text(
-                            text=f"{emoji_self} <b>Вы одобрили</b> breaking news\n<i>ID: {pending_id} — публикую в канал...</i>",
+                            text=receipt_text,
+                            parse_mode="HTML",
+                            reply_markup=None,
+                            disable_web_page_preview=True
+                        )
+                except Exception:
+                    pass
+            else:
+                # При отклонении — красивый статус отклонения
+                try:
+                    title = pending.get('title', 'Breaking News')
+                    from services.message_builder import AdvancedMessageFormatter as AMF
+                    display_title = AMF._smart_truncate(title, 160).upper()
+                    
+                    receipt_text = (
+                        f"❌ <b>ОТКЛОНЕНО ВАМИ</b>\n\n"
+                        f"📰 <b>{display_title}</b>"
+                    )
+                    if callback_query.message.photo:
+                        await callback_query.message.edit_caption(
+                            caption=receipt_text,
+                            parse_mode="HTML",
+                            reply_markup=None
+                        )
+                    else:
+                        await callback_query.message.edit_text(
+                            text=receipt_text,
                             parse_mode="HTML",
                             reply_markup=None
                         )
                 except Exception:
                     pass
-            else:
-                # При отклонении — удаляем карточку у одобрившего через 5 сек
-                asyncio.create_task(
-                    self._delayed_delete_message(callback_query.message, delay=5)
-                )
 
 
         except Exception as e:
@@ -527,19 +567,30 @@ class BreakingNewsModerator:
                 try:
                     msg_id = admin_messages.get(admin_id)
                     if msg_id:
+                        title = pending.get('title', 'Breaking News')
+                        from services.message_builder import AdvancedMessageFormatter as AMF
+                        display_title = AMF._smart_truncate(title, 160).upper()
+                        from datetime import datetime
+                        
                         if decision == "rejected":
                             # Удаляем оригинальное сообщение модерации через 3 сек
                             asyncio.create_task(
                                 self._delayed_delete_by_id(admin_id, msg_id, delay=3)
                             )
                         else:  # approved
-                            # БАГ 2 ИСПРАВЛЕН: admin-карточка — текстовое сообщение (send_message, без фото).
-                            # edit_message_caption вызвал бы BadRequest → сразу edit_message_text
                             try:
+                                receipt_text = (
+                                    f"✅ <b>УСПЕШНО ОПУБЛИКОВАНО</b>\n\n"
+                                    f"📰 <b>{display_title}</b>\n\n"
+                                    f"👤 Одобрил: {admin_name}\n"
+                                    f"⏱ Время: {datetime.now().strftime('%H:%M:%S')}\n\n"
+                                    f"🔗 <a href='https://t.me/blexler_invest'>Перейти к каналу</a>"
+                                )
                                 await bot.edit_message_text(
                                     chat_id=admin_id, message_id=msg_id,
-                                    text=f"{emoji} <b>{admin_name} {verb}</b> breaking news\n<i>ID: {pending_id}</i>",
-                                    parse_mode="HTML"
+                                    text=receipt_text,
+                                    parse_mode="HTML",
+                                    disable_web_page_preview=True
                                 )
                             except Exception:
                                 pass
